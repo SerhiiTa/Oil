@@ -8,6 +8,7 @@ import yfinance as yf
 from flask import Flask, jsonify, request
 from openai import OpenAI
 from bs4 import BeautifulSoup
+import concurrent.futures
 
 EIA_API_KEY = os.getenv("EIA_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
