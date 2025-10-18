@@ -7,6 +7,7 @@ import requests
 import yfinance as yf
 from flask import Flask, jsonify, request
 from openai import OpenAI
+from bs4 import BeautifulSoup
 
 EIA_API_KEY = os.getenv("EIA_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -14,14 +15,17 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 REQUEST_TIMEOUT = 20
-
 app = Flask(__name__)
+
+# ------------------------------
+# Helpers
+# ------------------------------
 
 def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def http_get(url):
-    return requests.get(url, timeout=REQUEST_TIMEOUT, headers={"User-Agent": "oil-analyzer/1.0"})
+    return requests.get(url, timeout=REQUEST_TIMEOUT, headers={"User-Agent": "oil-analyzer/2.0"})
 
 def send_telegram(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -33,6 +37,10 @@ def send_telegram(text):
         return r.ok
     except Exception:
         return False
+
+# ------------------------------
+# Yahoo Finance (DXY + WTI)
+# ------------------------------
 
 def get_prices():
     out = {"WTI": None, "WTI_change": None, "DXY": None, "DXY_change": None, "source": "Yahoo Finance"}
@@ -53,6 +61,10 @@ def get_prices():
         out["error"] = f"prices: {e}"
     return out
 
+# ------------------------------
+# EIA Weekly
+# ------------------------------
+
 def get_eia_weekly():
     if not EIA_API_KEY:
         return {"error": "EIA_API_KEY missing"}
@@ -68,36 +80,71 @@ def get_eia_weekly():
     except Exception as e:
         return {"error": f"eia: {e}"}
 
+# ------------------------------
+# CFTC Disaggregated Futures
+# ------------------------------
+
 def get_cftc():
     try:
         url = "https://www.cftc.gov/dea/newcot/Crude_oil_fut.txt"
-        txt = http_get(url).text
+        r = http_get(url)
+        if not r or r.status_code != 200:
+            return {"error": "CFTC offline or shutdown notice active."}
+        txt = r.text
         lines = [ln for ln in txt.splitlines() if ln.strip()]
         target = [ln for ln in lines if "NYMEX" in ln.upper() or "CRUDE OIL" in ln.upper()]
-        snippet = target[0][:160] if target else "N/A"
-        return {"snippet": snippet, "source": "CFTC newcot crude_oil_fut"}
+        snippet = target[0][:160] if target else "No Crude Oil data found"
+        return {"snippet": snippet, "source": "CFTC Disaggregated Futures"}
     except Exception as e:
         return {"error": f"cftc: {e}"}
 
+# ------------------------------
+# Baker Hughes Rig Count
+# ------------------------------
+
 def get_baker_hughes():
     try:
-        url = "https://rigcount.bakerhughes.com/"
-        html = http_get(url).text
-        start = html.find("<table")
-        end = html.find("</table>", start) + 8 if start != -1 else -1
-        snippet = html[start:end][:300] if start != -1 and end != -1 else "N/A"
+        # 1️⃣ Try RSS feed first
+        rss = http_get("https://rigcount.bakerhughes.com/feed")
+        if rss and rss.status_code == 200:
+            soup = BeautifulSoup(rss.text, "xml")
+            item = soup.find("item")
+            if item:
+                title = item.title.text
+                pubdate = item.pubDate.text
+                return {
+                    "title": title,
+                    "pubdate": pubdate,
+                    "source": "Baker Hughes RSS",
+                    "note": "RSS feed active, PDF temporarily unavailable"
+                }
+
+        # 2️⃣ Fallback: scrape table from main page
+        html = http_get("https://rigcount.bakerhughes.com/")
+        if not html:
+            return {"error": "Baker Hughes site not reachable"}
+        soup = BeautifulSoup(html.text, "html.parser")
+        table = soup.find("table")
+        snippet = table.get_text(" ", strip=True)[:400] if table else "No rig table found"
         return {"snippet": snippet, "source": "Baker Hughes main page"}
+
     except Exception as e:
         return {"error": f"rigs: {e}"}
+
+# ------------------------------
+# GPT Analysis
+# ------------------------------
 
 def gpt_analyze(payload):
     if not OPENAI_API_KEY:
         return "GPT disabled: OPENAI_API_KEY not set."
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""Ты опытный аналитик нефтяного рынка.
-Суммируй ключевые факторы (бычьи/медвежьи), дай краткую рекомендацию (BUY/SELL/NEUTRAL)
-и предложи цель/стоп на основе данных ниже. Форматируй кратко, без лишней воды.
+        prompt = f"""
+Ты аналитик нефтяного рынка. Используя EIA, CFTC и Baker Hughes данные,
+оцени кратко баланс рынка (спрос/предложение), дай бычьи/медвежьи факторы
+и предложи цель/стоп в диапазоне ±$2–3 от текущего уровня WTI.
+Выводи компактно в виде Telegram-анализа.
 
 Данные:
 {json.dumps(payload, ensure_ascii=False, indent=2)}
@@ -105,63 +152,60 @@ def gpt_analyze(payload):
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты лаконичный, точный и прагматичный рыночный аналитик."},
+                {"role": "system", "content": "Ты лаконичный, точный и прагматичный аналитик сырьевых рынков."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.2,
+            temperature=0.25,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"GPT error: {e}"
 
-def format_prices_msg(p):
-    w = p.get("WTI"); wchg = p.get("WTI_change")
-    d = p.get("DXY"); dchg = p.get("DXY_change")
-    parts = ["💹 <b>DXY & WTI update</b>", f"🕒 {utc_now()}"]
-    if w is not None: parts.append(f"🛢 WTI: <b>${w}</b>  (24h {wchg:+}%)")
-    if d is not None: parts.append(f"💵 DXY: <b>{d}</b>  (24h {dchg:+}%)")
-    return "\n".join(parts)
+# ------------------------------
+# Message Formatting
+# ------------------------------
 
 def format_generic_msg(title, payload, analysis=None):
     lines = [f"🧾 <b>{title}</b>", f"🕒 {utc_now()}"]
 
-    # EIA
     if "eia" in payload:
         e = payload["eia"].get("raw", {})
         lines.append(
-            f"<b>📅 Period:</b> {e.get('period', 'N/A')}\n"
-            f"<b>📍 Region:</b> {e.get('area-name', 'N/A')}\n"
-            f"<b>🛢 Product:</b> {e.get('product-name', 'N/A')}\n"
-            f"<b>⚙️ Process:</b> {e.get('process-name', 'N/A')}\n"
-            f"<b>📦 Value:</b> {e.get('value', 'N/A')} {e.get('units', '')}"
+            f"📅 Period: {e.get('period', 'N/A')}\n"
+            f"📍 Region: {e.get('area-name', 'N/A')}\n"
+            f"🛢 Product: {e.get('product-name', 'N/A')}\n"
+            f"⚙️ Process: {e.get('process-name', 'N/A')}\n"
+            f"📦 Value: {e.get('value', 'N/A')} {e.get('units', '')}"
         )
 
-    # CFTC
     if "cot" in payload:
         c = payload["cot"]
         if "snippet" in c:
-            lines.append(f"\n📊 <b>CFTC data:</b>\n<code>{c['snippet']}</code>")
+            lines.append(f"\n📊 <b>CFTC:</b>\n<code>{c['snippet']}</code>")
 
-    # Baker Hughes
     if "rigs" in payload:
         r = payload["rigs"]
         if "snippet" in r:
-            lines.append(f"\n🏗️ <b>Baker Hughes Rig Count:</b>\n<code>{r['snippet'][:300]}</code>")
+            lines.append(f"\n🏗️ <b>Baker Hughes Rig Count:</b>\n<code>{r['snippet']}</code>")
+        elif "title" in r:
+            lines.append(f"\n🏗️ <b>{r['title']}</b>\n🗓 {r.get('pubdate','')}")
 
-    # Prices
     if "prices" in payload:
         p = payload["prices"]
         lines.append(
-            f"\n💹 <b>Market snapshot:</b>\n"
-            f"🛢 WTI: ${p.get('WTI', 'N/A')} ({p.get('WTI_change', 0):+}%)\n"
-            f"💵 DXY: {p.get('DXY', 'N/A')} ({p.get('DXY_change', 0):+}%)"
+            f"\n💹 <b>Market Snapshot:</b>\n"
+            f"🛢 WTI: ${p.get('WTI','N/A')} ({p.get('WTI_change',0):+}%)\n"
+            f"💵 DXY: {p.get('DXY','N/A')} ({p.get('DXY_change',0):+}%)"
         )
 
-    # GPT analysis (AI)
     if analysis:
-        lines.append("\n🧠 <b>AI Analysis</b>\n" + analysis)
+        lines.append(f"\n🧠 <b>AI Analysis</b>\n{analysis}")
 
     return "\n".join(lines)
+
+# ------------------------------
+# Main Logic
+# ------------------------------
 
 def collect(mode: str):
     mode = (mode or "summary").lower()
@@ -174,8 +218,6 @@ def collect(mode: str):
         data["cot"] = get_cftc()
     if mode in ("rigs", "summary"):
         data["rigs"] = get_baker_hughes()
-    if mode == "api":
-        data["api_weekly"] = {"note": "API Weekly: можно подключить скрейпер новостей при необходимости."}
     return data
 
 def run_once(mode: str):
@@ -183,13 +225,14 @@ def run_once(mode: str):
     analysis = None
     if mode in ("summary", "eia", "cot", "rigs"):
         analysis = gpt_analyze(payload)
-    if mode == "prices":
-        msg = format_prices_msg(payload.get("prices", {}))
-    else:
-        title = f"Oil Report: {mode.upper()}"
-        msg = format_generic_msg(title, payload, analysis)
+    title = f"Oil Report: {mode.upper()}"
+    msg = format_generic_msg(title, payload, analysis)
     sent = send_telegram(msg)
     return {"ok": True, "sent": sent, "payload": payload, "analysis": analysis}
+
+# ------------------------------
+# Flask Endpoints
+# ------------------------------
 
 @app.route("/health")
 def health():
