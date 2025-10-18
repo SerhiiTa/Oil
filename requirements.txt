@@ -1,0 +1,6 @@
+flask
+requests
+yfinance
+openai
+pandas
+numpy
