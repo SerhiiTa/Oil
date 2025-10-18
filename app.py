@@ -214,6 +214,24 @@ def analyze_endpoint():
     return jsonify(run_once(mode))
 
 # ----------------------------------------------------------------
+# ============================================================
+# Telegram webhook handler (ручной триггер через /oil_summary)
+# ============================================================
 
+@app.route("/telegram", methods=["POST"])
+def telegram_webhook():
+    try:
+        data = request.get_json()
+        msg = data.get("message", {}).get("text", "")
+        chat_id = data.get("message", {}).get("chat", {}).get("id")
+
+        if msg.strip() == "/oil_summary":
+            result = run_once("summary")
+            send_telegram("🛢 Manual oil summary triggered via Telegram.")
+            return jsonify({"ok": True, "result": result})
+
+        return jsonify({"ok": True, "ignored": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
