@@ -431,3 +431,6 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
+@app.route("/")
+def index():
+    return jsonify({"ok": True, "message": "Oil Analyzer Bot is running", "time": utc_now()})
