@@ -57,7 +57,11 @@ def get_eia_weekly():
     if not EIA_API_KEY:
         return {"error": "EIA_API_KEY missing"}
     try:
-        url = f"https://api.eia.gov/v2/petroleum/sum/sndw/data/?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1"
+        url = (
+            "https://api.eia.gov/v2/petroleum/sum/sndw/data/"
+            f"?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value"
+            "&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1"
+        )
         js = http_get(url).json()
         rec = js["response"]["data"][0]
         return {"raw": rec, "period": rec.get("period")}
@@ -91,13 +95,13 @@ def gpt_analyze(payload):
         return "GPT disabled: OPENAI_API_KEY not set."
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = (
-            "Ты опытный аналитик нефтяного рынка. "
-            "Суммируй ключевые факторы (бычьи/медвежьи), дай краткую рекомендацию (BUY/SELL/NEUTRAL) "
-            "и предложи цель/стоп на основе данных ниже. Форматируй кратко."
-            f"Данные:
-{json.dumps(payload, ensure_ascii=False, indent=2)}"
-        )
+        prompt = f"""Ты опытный аналитик нефтяного рынка.
+Суммируй ключевые факторы (бычьи/медвежьи), дай краткую рекомендацию (BUY/SELL/NEUTRAL)
+и предложи цель/стоп на основе данных ниже. Форматируй кратко, без лишней воды.
+
+Данные:
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+"""
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -153,7 +157,6 @@ def run_once(mode: str):
     sent = send_telegram(msg)
     return {"ok": True, "sent": sent, "payload": payload, "analysis": analysis}
 
-from flask import Flask
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "time": utc_now()})
