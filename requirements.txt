@@ -4,3 +4,4 @@ yfinance
 openai
 pandas
 numpy
+gunicorn
