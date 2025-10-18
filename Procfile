@@ -1,1 +1,1 @@
-web: gunicorn app:app --workers 2 --threads 2 --timeout 120 --preload
+web: gunicorn app:app --workers 2 --threads 4 --timeout 180 --preload --log-level info
