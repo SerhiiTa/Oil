@@ -136,30 +136,37 @@ def get_baker_hughes():
 # ------------------------------
 
 def gpt_analyze(payload):
+    """Отправляет данные в OpenAI и получает краткий анализ (с таймаутом и fallback)."""
     if not OPENAI_API_KEY:
-        return "GPT disabled: OPENAI_API_KEY not set."
-    try:
+        return "⚠️ GPT disabled: OPENAI_API_KEY not set."
+
+    def _call_openai():
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""
-Ты аналитик нефтяного рынка. Используя EIA, CFTC и Baker Hughes данные,
-оцени кратко баланс рынка (спрос/предложение), дай бычьи/медвежьи факторы
-и предложи цель/стоп в диапазоне ±$2–3 от текущего уровня WTI.
-Выводи компактно в виде Telegram-анализа.
+        prompt = f"""Ты опытный аналитик нефтяного рынка.
+Суммируй ключевые факторы (бычьи/медвежьи), дай краткую рекомендацию (BUY/SELL/NEUTRAL)
+и предложи цель/стоп на основе данных ниже. Форматируй чётко, лаконично и по сути.
 
 Данные:
-{json.dumps(payload, ensure_ascii=False, indent=2)}
-"""
+{json.dumps(payload, ensure_ascii=False, indent=2)}"""
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты лаконичный, точный и прагматичный аналитик сырьевых рынков."},
+                {"role": "system", "content": "Ты прагматичный аналитик рынка нефти."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.25,
+            temperature=0.2,
         )
         return resp.choices[0].message.content.strip()
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_call_openai)
+            return future.result(timeout=15)
+    except concurrent.futures.TimeoutError:
+        return "⏳ GPT response timeout — using last known logic (NEUTRAL)"
     except Exception as e:
-        return f"GPT error: {e}"
+        print(f"[GPT ERROR] {e}", file=sys.stderr)
+        return f"⚠️ GPT error: {e}"
 
 # ------------------------------
 # Message Formatting
@@ -221,14 +228,23 @@ def collect(mode: str):
     return data
 
 def run_once(mode: str):
+    """Основная функция: сбор данных, анализ, отправка в Telegram"""
     payload = collect(mode)
     analysis = None
-    if mode in ("summary", "eia", "cot", "rigs"):
-        analysis = gpt_analyze(payload)
-    title = f"Oil Report: {mode.upper()}"
-    msg = format_generic_msg(title, payload, analysis)
-    sent = send_telegram(msg)
-    return {"ok": True, "sent": sent, "payload": payload, "analysis": analysis}
+    try:
+        if mode in ("summary", "eia", "cot", "rigs"):
+            analysis = gpt_analyze(payload)
+        if mode == "prices":
+            msg = format_prices_msg(payload.get("prices", {}))
+        else:
+            title = f"Oil Report: {mode.upper()}"
+            msg = format_generic_msg(title, payload, analysis)
+        sent = send_telegram(msg)
+        print(f"[{utc_now()}] Sent: {mode} | Telegram status: {sent}")
+        return {"ok": True, "sent": sent, "payload": payload, "analysis": analysis}
+    except Exception as e:
+        print(f"[ERROR] run_once({mode}): {e}", file=sys.stderr)
+        return {"ok": False, "error": str(e)}
 
 # ------------------------------
 # Flask Endpoints
