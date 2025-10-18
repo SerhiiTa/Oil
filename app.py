@@ -124,9 +124,43 @@ def format_prices_msg(p):
 
 def format_generic_msg(title, payload, analysis=None):
     lines = [f"🧾 <b>{title}</b>", f"🕒 {utc_now()}"]
-    lines.append(f"<code>{json.dumps(payload, ensure_ascii=False)[:800]}</code>")
+
+    # EIA
+    if "eia" in payload:
+        e = payload["eia"].get("raw", {})
+        lines.append(
+            f"<b>📅 Period:</b> {e.get('period', 'N/A')}\n"
+            f"<b>📍 Region:</b> {e.get('area-name', 'N/A')}\n"
+            f"<b>🛢 Product:</b> {e.get('product-name', 'N/A')}\n"
+            f"<b>⚙️ Process:</b> {e.get('process-name', 'N/A')}\n"
+            f"<b>📦 Value:</b> {e.get('value', 'N/A')} {e.get('units', '')}"
+        )
+
+    # CFTC
+    if "cot" in payload:
+        c = payload["cot"]
+        if "snippet" in c:
+            lines.append(f"\n📊 <b>CFTC data:</b>\n<code>{c['snippet']}</code>")
+
+    # Baker Hughes
+    if "rigs" in payload:
+        r = payload["rigs"]
+        if "snippet" in r:
+            lines.append(f"\n🏗️ <b>Baker Hughes Rig Count:</b>\n<code>{r['snippet'][:300]}</code>")
+
+    # Prices
+    if "prices" in payload:
+        p = payload["prices"]
+        lines.append(
+            f"\n💹 <b>Market snapshot:</b>\n"
+            f"🛢 WTI: ${p.get('WTI', 'N/A')} ({p.get('WTI_change', 0):+}%)\n"
+            f"💵 DXY: {p.get('DXY', 'N/A')} ({p.get('DXY_change', 0):+}%)"
+        )
+
+    # GPT analysis (AI)
     if analysis:
-        lines.append("\n🧠 <b>AI-анализ</b>\n" + analysis)
+        lines.append("\n🧠 <b>AI Analysis</b>\n" + analysis)
+
     return "\n".join(lines)
 
 def collect(mode: str):
