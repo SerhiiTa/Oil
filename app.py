@@ -514,6 +514,49 @@ def telegram_webhook():
         return jsonify({"ok": False, "error": str(e)}), 200
 
 # ====== RUN ======
+# ====== RUN ONCE (MAIN SUMMARY BUILDER) ======
+
+def run_once(mode="summary", chat_id=None):
+    """
+    Генерирует полный сводный отчёт (summary) или другие режимы при необходимости.
+    """
+    try:
+        # Подтягиваем все данные
+        eia = get_eia_weekly()
+        baker = get_baker_hughes()
+        cftc = get_cftc()
+        fred = get_fred()
+        prices = get_prices()
+
+        # Формируем payload
+        payload = {
+            "eia": eia,
+            "baker": baker,
+            "cftc": cftc,
+            "fred": fred,
+            "prices": prices,
+        }
+
+        # добавляем быстрый анализ CFTC (если доступен snippet)
+        payload["cftc_interpretation"] = analyze_cftc_snippet(cftc.get("snippet", ""))
+
+        # Анализ AI
+        analysis = gpt_analyze(payload, prices)
+
+        # Формируем общий текстовый отчёт
+        report = fmt_summary(payload, analysis=analysis)
+
+        # Отправляем в Telegram, если есть chat_id
+        if chat_id:
+            send_telegram(report, chat_id=chat_id)
+
+        return report
+
+    except Exception as e:
+        err_msg = f"❌ run_once error: {e}"
+        if chat_id:
+            send_telegram(err_msg, chat_id=chat_id)
+        return err_msg
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         # локальный запуск: python app.py summary
