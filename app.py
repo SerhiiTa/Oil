@@ -245,9 +245,9 @@ def get_prices():
     Кэш: 10 минут.
     """
     cached = get_cache("prices")
-    if cached and (datetime.now(timezone.utc) - CACHE["prices"]["ts"]).total_seconds() < 120:
-        # для частых вызовов /prices (~спам) — отдаём тёплый кэш 2 минуты
-        return cached["data"]
+    if cached:
+        # возврат сразу, если свежие данные (<10 мин)
+        return cached
 
     out = {"WTI": None, "WTI_change": None, "DXY": None, "DXY_change": None, "source": "Yahoo Finance"}
 
@@ -266,9 +266,9 @@ def get_prices():
         out["DXY"] = round(d_last, 2)
         out["DXY_change"] = round((d_last - d_prev) / d_prev * 100, 2) if d_prev else 0.0
 
-    # если совсем ничего — вернём старый кэш, чтобы не сыпать N/A
+    # если совсем ничего — вернуть последний кэш, если есть
     if (out["WTI"] is None and out["DXY"] is None) and cached:
-        return cached["data"]
+        return cached
 
     set_cache("prices", out, 600)
     return out
