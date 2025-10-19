@@ -663,21 +663,26 @@ def fmt_summary(payload, analysis=None):
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
 
     # ===== BAKER HUGHES =====
-    baker = payload.get("baker") or {}
+# ===== BAKER HUGHES =====
+baker = payload.get("baker") or {}
 
-    # Если есть отдельный форматтер fmt_baker — используем его
-    if 'fmt_baker' in globals():
-        lines += ["", fmt_baker(baker)]
-    else:
-        snippet = baker.get("snippet")
-        sentiment = baker.get("sentiment")
-        if snippet:
-            lines += [
-                "\n🛠 <b>Baker Hughes Rig Count</b>",
-                f"• {snippet[:300]}{'...' if len(snippet) > 300 else ''}",
-            ]
-            if sentiment:
-                lines.append(sentiment)
+if baker.get("error"):
+    lines += ["\n🛠 <b>Baker Hughes:</b> данные не получены."]
+else:
+    snippet = baker.get("snippet", "")
+    sentiment = baker.get("sentiment", "")
+
+    # Обрезаем слишком длинный текст
+    short_snippet = snippet[:250].strip()
+    if len(snippet) > 250:
+        short_snippet += "..."
+
+    lines += [
+        "\n🛠 <b>Baker Hughes Rig Count</b>",
+        f"• {short_snippet}",
+    ]
+    if sentiment:
+        lines.append(sentiment)
         else:
             lines += ["\n🛠 <b>Baker Hughes:</b> данные не получены."]
 
