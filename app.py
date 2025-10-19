@@ -92,29 +92,55 @@ def send_telegram(html_text, chat_id=None):
     except Exception:
         return False
         # ====== EIA ======
+# ====== EIA ======
 def get_eia_weekly():
     """
-    EIA Weekly Petroleum Status.
-    Берём любой доступный последний ряд (value/units/area/product/period).
+    EIA Weekly Petroleum Status (Crude Stocks, Production, Imports, Refinery Input)
     Кэш: 6 часов.
     """
     if not EIA_API_KEY:
         return {"error": "EIA_API_KEY missing"}
+
     cached = get_cache("eia")
     if cached:
         return cached
+
     try:
+        # Фильтруем только основные нефтяные ряды
         url = (
-            "https://api.eia.gov/v2/petroleum/sum/sndw/data/"
-            f"?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value"
-            "&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1"
+            "https://api.eia.gov/v2/petroleum/wps/data/"
+            f"?api_key={EIA_API_KEY}"
+            "&frequency=weekly"
+            "&data[0]=value"
+            "&facets[series][]=PET.WCRSTUS1.W"  # Stocks
+            "&facets[series][]=PET.WCRFPUS2.W"  # Production
+            "&facets[series][]=PET.WCEIMUS2.W"  # Imports
+            "&facets[series][]=PET.WPULEUS3.W"  # Refinery Input
+            "&sort[0][column]=period&sort[0][direction]=desc"
+            "&offset=0&length=4"
         )
+
         js = http_get(url).json()
-        rec = (js.get("response") or {}).get("data") or []
-        rec = rec[0] if rec else {}
-        out = {"period": rec.get("period"), "raw": rec}
-        set_cache("eia", out, 21600)
+        records = (js.get("response") or {}).get("data") or []
+
+        if not records:
+            return {"error": "No EIA records found"}
+
+        # Готовим список ключевых показателей
+        summary = []
+        for r in records:
+            summary.append({
+                "period": r.get("period"),
+                "series": r.get("series-description"),
+                "value": r.get("value"),
+                "units": r.get("units", ""),
+            })
+
+        out = {"period": records[0].get("period"), "summary": summary}
+        set_cache("eia", out, 21600)  # 6 часов
+
         return out
+
     except Exception as e:
         return {"error": f"eia: {e}"}
 
