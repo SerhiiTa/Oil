@@ -246,14 +246,15 @@ def gpt_analyze(payload):
     if not OPENAI_API_KEY:
         return "GPT disabled: OPENAI_API_KEY not set."
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)  # ❌ без proxies!
         resp = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",  # стабільна версія
             messages=[
-                {"role": "system", "content": "Ты аналитик нефтяного рынка."},
+                {"role": "system", "content": "Ты аналитик нефтяного рынка. Дай краткий анализ отчета."},
                 {"role": "user", "content": "Проанализируй данные:\n" + json.dumps(payload, ensure_ascii=False, indent=2)},
             ],
-            temperature=0.3,
+            temperature=0.4,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
