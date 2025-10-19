@@ -152,6 +152,15 @@ def get_eia_weekly():
             val, u, _ = data["production"]
             report += f"⚙️ **Production:** {val or 'N/A'} {u}\n"
 
+        return {
+            "period": period,
+            "report": report,
+            "source": "EIA API",
+        }
+
+    except Exception as e:
+        return {"error": f"EIA parse error: {e}"}
+
 def get_eia_real_test(api_key: str):
     """
     Тестовый запрос к официальному EIA API v2.
