@@ -425,7 +425,7 @@ def fmt_summary(payload, analysis=None):
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
 
     # EIA
-        # ====== EIA ======
+    # ====== EIA ======
     eia = payload.get("eia") or {}
     if isinstance(eia, dict) and "raw" in eia:
         raw = eia["raw"]
