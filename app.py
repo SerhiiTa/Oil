@@ -188,10 +188,9 @@ import re
 
 def get_baker_hughes():
     """
-    Извлекает краткий отчёт Baker Hughes Rig Count:
-    U.S., Canada, International и их изменения.
-    Источник: https://rigcount.bakerhughes.com/
-    Кэш: 24 часа.
+    Сниппет со страницы https://rigcount.bakerhughes.com/
+    Берём текст вокруг ключевых слов; кэш на сутки.
+    Пытаемся вытащить U.S./Canada/International и их изменения.
     """
     cached = get_cache("baker")
     if cached:
@@ -200,53 +199,71 @@ def get_baker_hughes():
     try:
         html = http_get("https://rigcount.bakerhughes.com/").text
         soup = BeautifulSoup(html, "html.parser")
-        txt = " ".join(soup.get_text(" ", strip=True).split())
+        txt = soup.get_text(" ", strip=True)
 
-        # ---- Основные регионы ----
-        pattern = re.compile(r"(U\.S\.|Canada|International)\s+([A-Za-z]{3,}\s\d{4})?\s*(\d+)\s*\(([\+\-]\d+)\)")
-        matches = pattern.findall(txt)
+        # Нормализуем пробелы
+        txt_norm = re.sub(r"\s+", " ", txt)
 
-        lines = []
-        for m in matches:
-            region, date, count, delta = m
-            lines.append(f"{region} {count} ({delta})")
+        # Ищем компактный фрагмент вокруг ключей
+        anchors = ["U.S.", "Canada", "International", "Rig Count"]
+        snippet = None
+        for a in anchors:
+            if a in txt_norm:
+                i = txt_norm.find(a)
+                snippet = txt_norm[max(0, i - 80): i + 320]
+                break
+        snippet = (snippet or txt_norm[:400]).strip()
 
-        summary = " • ".join(lines) if lines else "Данные о буровых не найдены."
-
-        # ---- Поиск общей динамики (еженедельной и годовой) ----
-        week_match = re.search(r"Change from Prior Count\s*([+\-]?\d+)", txt)
-        year_match = re.search(r"Change from Last Year\s*([+\-]?\d+)", txt)
-
-        week_change = week_match.group(1) if week_match else "N/A"
-        year_change = year_match.group(1) if year_match else "N/A"
-
-        change_line = f"Weekly change: {week_change} | YoY change: {year_change}"
-
-        # ---- Определяем сентимент ----
-        sentiment = "⚪ Neutral"
-        try:
-            if int(week_change) > 0:
-                sentiment = "🟥 Bearish — рост числа вышек может увеличить предложение нефти."
-            elif int(week_change) < 0:
-                sentiment = "🟩 Bullish — сокращение вышек снижает предложение нефти."
-        except Exception:
-            pass
-
-        # ---- Поиск даты отчёта ----
-        date_match = re.search(r"(\d{1,2}\s[A-Za-z]{3,}\s\d{4})", txt)
-        date_str = date_match.group(1) if date_match else "Latest update"
-
-        # ---- Собираем результат ----
-        out = {
-            "snippet": f"{summary} — {date_str}\n{change_line}",
-            "sentiment": sentiment,
-            "source": "Baker Hughes (Rig Count)"
+        # Пытаемся вытащить числа и дельты
+        # Пример шаблона: "U.S. 17 Oct 2025 548 +1"
+        rec = {
+            "us": None, "us_delta": None,
+            "canada": None, "canada_delta": None,
+            "intl": None, "intl_delta": None,
+            "as_of": None
         }
-        set_cache("baker", out, 86400)
-        return out
 
+        m_us = re.search(r"U\.S\.\s+(\d{1,2}\s+\w+\s+\d{4})\s+(\d+)\s+([+\-]\d+)", txt_norm)
+        if m_us:
+            rec["as_of"] = rec["as_of"] or m_us.group(1)
+            rec["us"] = int(m_us.group(2)); rec["us_delta"] = int(m_us.group(3))
+
+        m_ca = re.search(r"Canada\s+(\d{1,2}\s+\w+\s+\d{4})\s+(\d+)\s+([+\-]\d+)", txt_norm)
+        if m_ca:
+            rec["as_of"] = rec["as_of"] or m_ca.group(1)
+            rec["canada"] = int(m_ca.group(2)); rec["canada_delta"] = int(m_ca.group(3))
+
+        m_int = re.search(r"International\s+([A-Z][a-z]{2,9}\s+\d{4})\s+(\d+)\s+([+\-]\d+)", txt_norm)
+        if m_int:
+            # Международный блок часто помесячный (например, "Sept 2025")
+            rec["intl"] = int(m_int.group(2)); rec["intl_delta"] = int(m_int.group(3))
+
+        # Сентимент: ориентируемся на U.S. дельту, если есть
+        if rec["us_delta"] is not None:
+            if rec["us_delta"] > 0:
+                sentiment = "🟥 Bearish — рост числа вышек может увеличить предложение нефти."
+            elif rec["us_delta"] < 0:
+                sentiment = "🟩 Bullish — сокращение вышек может сдержать предложение."
+            else:
+                sentiment = "⚪ Neutral — без изменения числа вышек."
+        else:
+            sentiment = "⚪ Neutral — данных по дельте недостаточно."
+
+        out = {
+            "snippet": snippet,
+            "source": "Baker Hughes (Rig Count)",
+            "as_of": rec["as_of"],
+            "us": rec["us"], "us_delta": rec["us_delta"],
+            "canada": rec["canada"], "canada_delta": rec["canada_delta"],
+            "intl": rec["intl"], "intl_delta": rec["intl_delta"],
+            "sentiment": sentiment,
+        }
     except Exception as e:
-        return {"error": f"baker: {e}"}
+        out = {"error": f"baker: {e}"}
+
+    # Кэшируем на сутки (даже если парсинг частичный — пригодится)
+    set_cache("baker", out, 86400)
+    return out
 
 # ====== CFTC (Disaggregated Futures + Options) ======
 CFTC_FUT = "https://www.cftc.gov/dea/futures/petroleum_lf.htm"
