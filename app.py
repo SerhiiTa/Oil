@@ -163,27 +163,59 @@ def get_cftc():
 
 # ====== Yahoo Finance (WTI & DXY) ======
 def get_prices():
-    """WTI + DXY (cache 10m)."""
+    """
+    WTI & DXY c кэшем 10 минут. Стабильнее работает на Render:
+    - сначала .history(), потом fallback на .download()
+    - если не получили котировки, оставляем последний кэш, а не N/A
+    """
     cached = get_cache("prices")
-    if cached:
-        return cached
-    out = {"WTI": None, "WTI_change": None, "DXY": None, "DXY_change": None}
+    out = {"WTI": None, "WTI_change": None, "DXY": None, "DXY_change": None, "source": "Yahoo Finance"}
+
+    def _last_close(ticker, period="2d", interval=None):
+        t = yf.Ticker(ticker)
+        try:
+            h = t.history(period=period, interval=interval or "1h")
+            if h is None or len(h.dropna()) == 0:
+                # fallback на download
+                h = yf.download(ticker, period=period, interval=interval or "1h", progress=False)
+            h = h.dropna()
+            if len(h) >= 2:
+                last = float(h["Close"].iloc[-1])
+                prev = float(h["Close"].iloc[-2])
+                return last, prev
+            elif len(h) == 1:
+                last = float(h["Close"].iloc[-1])
+                return last, last
+        except Exception:
+            return None, None
+        return None, None
+
+    # Пробуем получить WTI
+    w_last, w_prev = _last_close("CL=F")
+    # Пробуем получить DXY
+    d_last, d_prev = _last_close("DX-Y.NYB")
+
+    # Если ничего не получили — вернём кэш, чтобы не было N/A
+    if (w_last is None or w_prev is None) and (d_last is None or d_prev is None):
+        return cached or out
+
     try:
-        w = yf.download("CL=F", period="2d", interval="1h", progress=False)
-        if len(w):
-            wti = float(w["Close"].dropna().iloc[-1])
-            w_prev = float(yf.Ticker("CL=F").history(period="2d")["Close"].dropna().iloc[-2])
-            out["WTI"] = round(wti, 2)
-            out["WTI_change"] = round((wti - w_prev) / w_prev * 100, 2)
-        d = yf.download("DX-Y.NYB", period="2d", interval="1h", progress=False)
-        if len(d):
-            dxy = float(d["Close"].dropna().iloc[-1])
-            d_prev = float(yf.Ticker("DX-Y.NYB").history(period="2d")["Close"].dropna().iloc[-2])
-            out["DXY"] = round(dxy, 2)
-            out["DXY_change"] = round((dxy - d_prev) / d_prev * 100, 2)
+        if w_last is not None and w_prev is not None:
+            out["WTI"] = round(w_last, 2)
+            out["WTI_change"] = round((w_last - w_prev) / w_prev * 100, 2) if w_prev else 0.0
+        if d_last is not None and d_prev is not None:
+            out["DXY"] = round(d_last, 2)
+            out["DXY_change"] = round((d_last - d_prev) / d_prev * 100, 2) if d_prev else 0.0
     except Exception as e:
         out["error"] = f"prices: {e}"
-    set_cache("prices", out, ttl_sec=600)
+
+    # если остались None — подставим предыдущие кэш-значения, если есть
+    if cached:
+        for k in ["WTI", "WTI_change", "DXY", "DXY_change"]:
+            if out.get(k) is None:
+                out[k] = cached.get(k)
+
+    set_cache("prices", out, ttl_sec=600)  # 10 минут
     return out
 
 
@@ -236,27 +268,30 @@ def get_alpha_vantage():
 
 # ====== GPT ANALYSIS ======
 def gpt_analyze(payload):
-    """AI-анализ рынка на основе собранных данных."""
+    """
+    Генерирует AI-комментарий. Без прокси-параметров (совместимо с openai v1.x).
+    API-ключ берется из переменной окружения OPENAI_API_KEY.
+    """
     if not OPENAI_API_KEY:
         return "GPT disabled: OPENAI_API_KEY not set."
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""
-Ты опытный аналитик нефтяного и макроэкономического рынка.
-Проанализируй данные ниже по каждому источнику (EIA, Baker Hughes, CFTC, FRED, Alpha Vantage, Yahoo Finance).
-Дай отдельные краткие выводы по каждому блоку, затем общий анализ рынка и прогноз на 24–72 часа.
-Укажи целевой диапазон и стоп. Форматируй как Telegram-отчёт.
+        # В v1.x клиент сам берёт ключ из env; передавать вручную тоже можно:
+        client = OpenAI(api_key=OPENAI_API_KEY)  # никаких proxies/transport
 
-Данные:
-{json.dumps(payload, ensure_ascii=False, indent=2)}
-"""
+        prompt = (
+            "Ты опытный аналитик нефтяного рынка. "
+            "Суммируй ключевые факторы (бычьи/медвежьи), дай рекомендацию (BUY/SELL/NEUTRAL), "
+            "укажи целевой диапазон (24–72ч) и стоп. Пиши ёмко, но содержательно.\n\n"
+            "Данные:\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+
         resp = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o",  # если хочешь gpt-4o-mini — замени на "gpt-4o-mini"
             messages=[
-                {"role": "system", "content": "Ты краткий, логичный и рыночный аналитик. Пиши структурировано."},
+                {"role": "system", "content": "Ты лаконичный и прагматичный рыночный аналитик."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
+            temperature=0.25,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
