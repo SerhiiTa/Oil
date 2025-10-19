@@ -182,31 +182,54 @@ def get_eia_weekly():
         return {"error": f"EIA fetch error: {e}"}
 
 # ====== Baker Hughes ======
+# ====== Baker Hughes ======
 def get_baker_hughes():
     """
-    Сниппет со страницы https://rigcount.bakerhughes.com/
-    Берём текст вокруг ключевых слов; кэш на сутки.
+    Извлекает сниппет с сайта Baker Hughes Rig Count и делает краткий анализ.
+    Источник: https://rigcount.bakerhughes.com/
+    Кэш: 24 часа.
     """
     cached = get_cache("baker")
     if cached:
         return cached
+
     try:
         html = http_get("https://rigcount.bakerhughes.com/").text
         soup = BeautifulSoup(html, "html.parser")
         txt = soup.get_text(" ", strip=True)
-        # Ищем быстрые маркеры
-        anchors = ["U.S.", "Canada", "International", "Rig Count"]
+
+        # Основные ключевые слова
+        anchors = ["U.S.", "Canada", "International", "Rig Count", "Total"]
         snippet = None
         for a in anchors:
             if a in txt:
                 i = txt.find(a)
-                snippet = txt[max(0, i - 80) : i + 300]
+                snippet = txt[max(0, i - 100): i + 320]
                 break
-        out = {"snippet": (snippet or txt[:400]).strip(), "source": "Baker Hughes (Rig Count)"}
+
+        if not snippet:
+            # fallback — хотя бы первые 400 символов
+            snippet = txt[:400]
+
+        snippet = " ".join(snippet.split())  # убираем двойные пробелы
+
+        # Короткий анализ настроения
+        bias = "⚪ Neutral"
+        if "+1" in snippet or "+2" in snippet or "up" in snippet.lower():
+            bias = "🟥 Bearish — рост числа вышек может увеличить предложение нефти."
+        elif "-1" in snippet or "-2" in snippet or "down" in snippet.lower():
+            bias = "🟩 Bullish — сокращение вышек снижает предложение."
+
+        out = {
+            "snippet": snippet.strip(),
+            "sentiment": bias,
+            "source": "Baker Hughes (Rig Count)"
+        }
+        set_cache("baker", out, 86400)
+        return out
+
     except Exception as e:
-        out = {"error": f"baker: {e}"}
-    set_cache("baker", out, 86400)
-    return out
+        return {"error": f"baker: {e}"}
 
 # ====== CFTC (Disaggregated Futures + Options) ======
 CFTC_FUT = "https://www.cftc.gov/dea/futures/petroleum_lf.htm"
@@ -589,7 +612,20 @@ def gpt_analyze(payload, prices):
 # ====== FORMAT MAIN SUMMARY ======
 def fmt_summary(payload, analysis=None):
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
-
+    # ====== BAKER HUGHES ======
+    baker = payload.get("baker") or {}
+    snippet = baker.get("snippet")
+    sentiment = baker.get("sentiment")
+    if snippet:
+        lines += [
+            "\n🛠 <b>Baker Hughes Rig Count</b>",
+            f"• {snippet[:300]}{'...' if len(snippet) > 300 else ''}",
+        ]
+        if sentiment:
+            lines.append(sentiment)
+    else:
+        lines += ["\n🛠 <b>Baker Hughes:</b> данные не получены."]
+ 
     # ====== EIA ======
     eia = payload.get("eia") or {}
     if isinstance(eia, dict) and "raw" in eia:
