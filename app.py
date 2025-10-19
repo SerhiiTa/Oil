@@ -92,11 +92,11 @@ def send_telegram(html_text, chat_id=None):
     except Exception:
         return False
         # ====== EIA ======
-# ====== EIA ======
-    def get_eia_weekly():
+def get_eia_weekly():
     """
-    EIA Crude Oil Weekly Report — красиво форматированный Telegram-отчёт.
+    Weekly EIA Petroleum Summary — Crude Oil (EPC0)
     Кэш: 6 часов.
+    Возвращает красиво оформленный отчёт для Telegram.
     """
     if not EIA_API_KEY:
         return {"error": "EIA_API_KEY missing"}
@@ -115,63 +115,66 @@ def send_telegram(html_text, chat_id=None):
             "&sort[0][column]=period&sort[0][direction]=desc"
             "&offset=0&length=5"
         )
+
         js = http_get(url).json()
         records = (js.get("response") or {}).get("data") or []
-
         if not records:
             return {"error": "No EIA Crude Oil records found"}
 
-        # Извлекаем данные
+        # ==== Извлечение ключевых показателей ====
         data = {}
         for r in records:
-            desc = r.get("series-description", "")
+            sdesc = r.get("series-description", "")
             val = r.get("value")
-            units = r.get("units", "")
-            if "Ending Stocks" in desc:
-                data["stocks"] = (val, units)
-            elif "Imports" in desc:
-                data["imports"] = (val, units)
-            elif "Production" in desc:
-                data["production"] = (val, units)
+            unit = r.get("units", "")
+            if "Ending Stocks" in sdesc:
+                data["stocks"] = (val, unit, sdesc)
+            elif "Imports" in sdesc:
+                data["imports"] = (val, unit, sdesc)
+            elif "Production" in sdesc:
+                data["production"] = (val, unit, sdesc)
 
-        period = records[0].get("period")
-
-        # Красивое форматирование
+        # ==== Формирование красивого отчёта ====
+        period = records[0].get("period", "N/A")
         report = (
-            f"🛢 **EIA Crude Oil Report — {period}**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🛢 **EIA Crude Oil Weekly Report ({period})**\n"
+            f"──────────────────────────────\n"
         )
 
         if "stocks" in data:
-            val, u = data["stocks"]
-            report += f"📦 **Stocks:** `{val}` {u}\n"
+            val, u, _ = data["stocks"]
+            report += f"📦 **Stocks:** {val or 'N/A'} {u}\n"
         if "imports" in data:
-            val, u = data["imports"]
-            report += f"🚢 **Imports (SPR):** `{val}` {u}\n"
+            val, u, _ = data["imports"]
+            report += f"🚢 **Imports:** {val or 'N/A'} {u}\n"
         if "production" in data:
-            val, u = data["production"]
-            report += f"⚙️ **Production (AK):** `{val}` {u}\n"
+            val, u, _ = data["production"]
+            report += f"⚙️ **Production:** {val or 'N/A'} {u}\n"
 
-        # Анализ
-        analysis = "\n📊 **AI Summary:**\n"
-        stocks_val = float(data.get("stocks", [0])[0])
-        prod_val = float(data.get("production", [0])[0])
-        if stocks_val > 800000:
-            analysis += "• 📈 High crude stocks may pressure prices.\n"
-        else:
-            analysis += "• 📉 Low inventories support bullish tone.\n"
-        if prod_val > 400:
-            analysis += "• ⚙️ Production stable — neutral bias.\n"
-        else:
-            analysis += "• 🛢 Production decline — bullish support.\n"
+        # ==== Аналитика (AI Summary) ====
+        analysis = "\n📈 **AI Summary:**\n"
+        try:
+            stocks_val = float(data.get("stocks", [0])[0] or 0)
+            prod_val = float(data.get("production", [0])[0] or 0)
+            if stocks_val > 420000:
+                analysis += "• High crude inventories may pressure prices slightly.\n"
+            else:
+                analysis += "• Lower inventories support a bullish tone.\n"
+            if prod_val > 400:
+                analysis += "• Production remains stable → balanced market.\n"
+            else:
+                analysis += "• Production decline supports upside potential.\n"
+        except Exception:
+            analysis += "• Not enough data for full evaluation.\n"
 
-        report += analysis + "━━━━━━━━━━━━━━━━━━━━━━━"
-
+        # ==== Собираем итог ====
+        report += analysis
         result = {
             "period": period,
             "raw": data,
             "report": report
         }
+
         set_cache("eia", result, 21600)
         return result
 
