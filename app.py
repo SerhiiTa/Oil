@@ -451,15 +451,23 @@ def telegram_webhook():
 
         if text in ("/start", "/help"):
             help_txt = (
-                "🛢 <b>Oil Analyzer Bot</b>\n\n"
-                "Команды:\n"
-                "• /summary — полный отчёт (EIA, Baker, CFTC, Macro, Market, AI)\n"
-                "• /prices — быстрый апдейт WTI & DXY\n"
-                "• /eia — последний weekly-срез EIA\n"
-                "• /baker — сниппет Baker Hughes\n"
-                "• /cot — CFTC petroleum (disaggregated) сниппет\n"
-                "• /macro — CPI & FedRate (FRED)\n"
-                "\n⏰ Автоотчёт ежедневно в 08:00 America/Chicago (через Render CRON)."
+                "🛢 <b>Oil Analyzer Bot — команды</b>\n\n"
+                "📊 <b>Основные отчёты:</b>\n"
+                "• /summary — полный AI-отчёт (EIA, Baker, CFTC, Macro, Prices)\n"
+                "• /prices — быстрый апдейт по WTI и DXY\n\n"
+                "🧾 <b>Источники данных:</b>\n"
+                "• /eia — последний отчёт EIA (Weekly Petroleum Status)\n"
+                "• /baker — последние данные Baker Hughes (буровые установки)\n"
+                "• /cot — короткий CFTC raw-срез\n"
+                "• /cot_full — полный AI-анализ CFTC (Commitments of Traders)\n"
+                "• /macro — макроэкономика (CPI, Fed Funds Rate)\n\n"
+                "🤖 <b>AI Аналитика:</b>\n"
+                "• Автоотчёт ежедневно в 08:00 America/Chicago (через Render CRON)\n"
+                "• Используется модель <code>gpt-4o-mini</code> с низкой температурой (стабильный вывод)\n\n"
+                "💬 <b>Советы:</b>\n"
+                "— Команды можно вводить без регистра (/Summary = /summary)\n"
+                "— Используй /cot_full раз в неделю для глубокого отчёта CFTC\n"
+                "— /summary собирает всё воедино и делает торговый план."
             )
             send_telegram(help_txt, chat_id=chat_id)
             return jsonify({"ok": True})
@@ -512,10 +520,74 @@ def telegram_webhook():
         # не роняем вебхук — всегда 200
         send_telegram(f"Internal error:\n<code>{traceback.format_exc()[:1500]}</code>")
         return jsonify({"ok": False, "error": str(e)}), 200
+# ====== AI (OpenAI) ======
+def gpt_analyze(payload, prices):
+    """
+    Генерация торгового плана и сводки.
+    Если API-ключа нет — вернём краткий rule-based план.
+    """
+    def rule_based():
+        px = prices or {}
+        wti = px.get("WTI")
+        ch = px.get("WTI_change")
+        dxy = px.get("DXY_change")
+        if wti is None:
+            rec = "NEUTRAL"
+        else:
+            score = (ch or 0) - (dxy or 0)
+            rec = "BUY" if score > 0 else "SELL" if score < 0 else "NEUTRAL"
+        if wti:
+            vol = max(abs(ch or 0), 0.6) / 100.0
+            tgt = wti * (1 + (0.018 if rec == "BUY" else -0.018))
+            stp = wti * (1 - (0.009 if rec == "BUY" else -0.009))
+            tgt = round(tgt, 2)
+            stp = round(stp, 2)
+        else:
+            tgt = stp = None
 
+        lines = [
+            f"🔴 <b>EIA Oil Report Analysis</b>",
+            f"🎯 <b>{rec}</b>",
+            f"💰 Цена WTI: {('$'+_num(wti)) if wti else 'N/A'}",
+            "",
+            "<b>Торговый план:</b>",
+            f"🎯 Цель: {('$'+_num(tgt)) if tgt else 'Не определена'}",
+            f"⛔ Стоп: {('$'+_num(stp)) if stp else 'Не определен'}",
+        ]
+        return "\n".join(lines)
+
+    if not OPENAI_API_KEY:
+        return rule_based()
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        prompt = (
+            "Ты кратко и чётко анализируешь рынок нефти. Используй факты из блоков ниже и выдай:\n"
+            "1) Рекомендацию BUY/SELL/NEUTRAL\n"
+            "2) Торговый план: цель и стоп (динамические, опирайся на текущую цену WTI)\n"
+            "3) 2–4 фактора (буллеты) по EIA/Baker/CFTC/Macro/Prices\n"
+            "4) Короткий итог на 24–72 часа.\n\n"
+            "Данные:\n"
+            + json.dumps(payload, ensure_ascii=False)
+        )
+
+        msg = [
+            {"role": "system", "content": "Ты дисциплинированный рыночный аналитик. Коротко, по делу."},
+            {"role": "user", "content": prompt},
+        ]
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=msg,
+            temperature=0.25,
+            max_tokens=600,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"GPT error: {e}"
 # ====== RUN ======
 # ====== RUN ONCE (MAIN SUMMARY BUILDER) ======
-
 def run_once(mode="summary", chat_id=None):
     """
     Генерирует полный сводный отчёт (summary) или другие режимы при необходимости.
