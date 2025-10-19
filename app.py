@@ -498,7 +498,7 @@ def cron_daily():
     return jsonify({"ok": True, "result": res})
 # ===== FORMAT PRICES =====
 def fmt_prices(pr):
-    if not pr:
+    if not pr or "WTI" not in pr:
         return "💹 Market data unavailable."
 
     wti = pr.get("WTI")
@@ -506,11 +506,26 @@ def fmt_prices(pr):
     wti_ch = pr.get("WTI_change")
     dxy_ch = pr.get("DXY_change")
 
-    lines = [
-        "💹 <b>Market Update</b>",
-        f"🛢 WTI: ${_num(wti)} (24h {_pct(wti_ch)})",
-        f"💵 DXY: {_num(dxy)} (24h {_pct(dxy_ch)})",
-    ]
+    # Подпись источника
+    src = pr.get("source", "Yahoo Finance")
+
+    lines = ["💹 <b>Market Update</b>"]
+
+    # --- WTI ---
+    if wti is not None:
+        lines.append(f"🛢 WTI: ${_num(wti)} (24h {_pct(wti_ch)})")
+    else:
+        lines.append("🛢 WTI: $N/A (data unavailable)")
+
+    # --- DXY ---
+    if dxy is not None:
+        lines.append(f"💵 DXY: {_num(dxy)} (24h {_pct(dxy_ch)})")
+    else:
+        lines.append("💵 DXY: N/A")
+
+    # --- Источник данных ---
+    lines.append(f"📎 Source: {src}")
+
     return "\n".join(lines)
 # ====== TELEGRAM WEBHOOK ======
 @app.route("/telegram", methods=["POST"])
