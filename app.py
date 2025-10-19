@@ -646,8 +646,13 @@ def gpt_analyze(payload, prices):
 # ====== FORMAT MAIN SUMMARY ======
 def fmt_summary(payload, analysis=None):
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
-    # ====== BAKER HUGHES ======
-    baker = payload.get("baker") or {}
+ # ===== BAKER HUGHES =====
+baker = payload.get("baker") or {}
+
+# Если есть отдельный форматтер fmt_baker — используем его
+if 'fmt_baker' in globals():
+    lines += ["", fmt_baker(baker)]
+else:
     snippet = baker.get("snippet")
     sentiment = baker.get("sentiment")
     if snippet:
