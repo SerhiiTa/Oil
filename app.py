@@ -108,7 +108,7 @@ def get_eia_weekly():
     try:
         # Фильтруем только основные нефтяные ряды
         url = (
-            "https://api.eia.gov/v2/petroleum/wps/data/"
+            "https://api.eia.gov/v2/petroleum/pnp/data/"
             f"?api_key={EIA_API_KEY}"
             "&frequency=weekly"
             "&data[0]=value"
