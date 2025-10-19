@@ -142,32 +142,58 @@ def get_prices():
 # ============================
 
 # ====== GPT (4o-mini) ======
-def gpt_analyze(payload: dict) -> str:
+def gpt_analyze(payload, source=None):
     """
-    Полноценный комментарий рынка.
-    Важно: без proxies/transport — совместимо с openai==1.x.
+    GPT-анализатор (v2) — с торговыми рекомендациями.
+    Форматирует текст в Markdown для Telegram.
     """
-    if not OPENAI_API_KEY:
-        return "GPT disabled: OPENAI_API_KEY not set."
     try:
+        from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = (
+
+        system_prompt = (
             "Ты опытный аналитик нефтяного рынка. "
-            "Дай сжатый, но содержательный разбор по блокам: "
-            "EIA, Baker Hughes (буровые), CFTC (позиционирование), Macro (CPI/FedFunds/DXY), "
-            "цены (WTI). Для каждого блока: ключевые факты → бычьи/медвежьи факторы → вывод. "
-            "В конце — общий вердикт (BUY/SELL/NEUTRAL), цель (24–72ч) и стоп.\n\n"
-            "Данные:\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+            "Проанализируй предоставленные данные из JSON (EIA, Baker Hughes, CFTC, FRED, Yahoo). "
+            "Выяви ключевые бычьи и медвежьи факторы, затем сформулируй торговую рекомендацию: "
+            "BUY (лонг), SELL (шорт) или NEUTRAL. "
+            "Укажи текущую цену WTI, цель и стоп, если данные позволяют.\n\n"
+            "Используй структуру Markdown для Telegram с эмодзи и блоками:\n"
+            "🔴 **EIA Oil Report Analysis**\n"
+            "🎯 BUY / SELL / NEUTRAL\n"
+            "💰 Цена WTI: $...\n"
+            "🎯 Цель: ...\n"
+            "⛔ Стоп: ...\n\n"
+            "📊 Факторы:\n"
+            "- 🔴 Медвежий фактор\n"
+            "- 🟢 Бычий фактор\n\n"
+            "📈 Итог: короткое резюме (2–3 предложения)\n"
+            "⏰ Вход: диапазон времени (по UTC или CT)\n\n"
+            "Добавь внизу подпись: 🤖 *EIA Oil Analyzer*"
         )
+
+        # --- Выбор режима ---
+        if source:
+            user_prompt = f"Анализируй только источник: {source}\n\n" + json.dumps(payload.get(source, {}), ensure_ascii=False, indent=2)
+        else:
+            user_prompt = "Проанализируй все источники и сделай полный торговый отчёт:\n\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты лаконичный, прагматичный рыночный аналитик."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
             ],
-            temperature=0.25,
+            temperature=0.35,
         )
-        return resp.choices[0].message.content.strip()
+
+        text = resp.choices[0].message.content.strip()
+
+        # --- Добавим дату и сигнатуру ---
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        footer = f"\n\n🕒 *Generated automatically at {timestamp}*\n🤖 *EIA Oil Analyzer*"
+
+        return text + footer
+
     except Exception as e:
         return f"GPT error: {e}"
 
