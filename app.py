@@ -11,6 +11,7 @@ import sys
 import json
 import math
 import time
+import re
 import traceback
 import concurrent.futures
 from datetime import datetime, timezone, timedelta
@@ -183,9 +184,12 @@ def get_eia_weekly():
 
 # ====== Baker Hughes ======
 # ====== Baker Hughes ======
+import re
+
 def get_baker_hughes():
     """
-    Извлекает сниппет с сайта Baker Hughes Rig Count и делает краткий анализ.
+    Извлекает краткий отчёт Baker Hughes Rig Count:
+    U.S., Canada, International и их изменения.
     Источник: https://rigcount.bakerhughes.com/
     Кэш: 24 часа.
     """
@@ -196,33 +200,46 @@ def get_baker_hughes():
     try:
         html = http_get("https://rigcount.bakerhughes.com/").text
         soup = BeautifulSoup(html, "html.parser")
-        txt = soup.get_text(" ", strip=True)
+        txt = " ".join(soup.get_text(" ", strip=True).split())
 
-        # Основные ключевые слова
-        anchors = ["U.S.", "Canada", "International", "Rig Count", "Total"]
-        snippet = None
-        for a in anchors:
-            if a in txt:
-                i = txt.find(a)
-                snippet = txt[max(0, i - 100): i + 320]
-                break
+        # ---- Основные регионы ----
+        pattern = re.compile(r"(U\.S\.|Canada|International)\s+([A-Za-z]{3,}\s\d{4})?\s*(\d+)\s*\(([\+\-]\d+)\)")
+        matches = pattern.findall(txt)
 
-        if not snippet:
-            # fallback — хотя бы первые 400 символов
-            snippet = txt[:400]
+        lines = []
+        for m in matches:
+            region, date, count, delta = m
+            lines.append(f"{region} {count} ({delta})")
 
-        snippet = " ".join(snippet.split())  # убираем двойные пробелы
+        summary = " • ".join(lines) if lines else "Данные о буровых не найдены."
 
-        # Короткий анализ настроения
-        bias = "⚪ Neutral"
-        if "+1" in snippet or "+2" in snippet or "up" in snippet.lower():
-            bias = "🟥 Bearish — рост числа вышек может увеличить предложение нефти."
-        elif "-1" in snippet or "-2" in snippet or "down" in snippet.lower():
-            bias = "🟩 Bullish — сокращение вышек снижает предложение."
+        # ---- Поиск общей динамики (еженедельной и годовой) ----
+        week_match = re.search(r"Change from Prior Count\s*([+\-]?\d+)", txt)
+        year_match = re.search(r"Change from Last Year\s*([+\-]?\d+)", txt)
 
+        week_change = week_match.group(1) if week_match else "N/A"
+        year_change = year_match.group(1) if year_match else "N/A"
+
+        change_line = f"Weekly change: {week_change} | YoY change: {year_change}"
+
+        # ---- Определяем сентимент ----
+        sentiment = "⚪ Neutral"
+        try:
+            if int(week_change) > 0:
+                sentiment = "🟥 Bearish — рост числа вышек может увеличить предложение нефти."
+            elif int(week_change) < 0:
+                sentiment = "🟩 Bullish — сокращение вышек снижает предложение нефти."
+        except Exception:
+            pass
+
+        # ---- Поиск даты отчёта ----
+        date_match = re.search(r"(\d{1,2}\s[A-Za-z]{3,}\s\d{4})", txt)
+        date_str = date_match.group(1) if date_match else "Latest update"
+
+        # ---- Собираем результат ----
         out = {
-            "snippet": snippet.strip(),
-            "sentiment": bias,
+            "snippet": f"{summary} — {date_str}\n{change_line}",
+            "sentiment": sentiment,
             "source": "Baker Hughes (Rig Count)"
         }
         set_cache("baker", out, 86400)
