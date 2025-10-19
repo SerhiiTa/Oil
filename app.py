@@ -490,6 +490,15 @@ def telegram_webhook():
             c = get_cftc()
             send_telegram(f"CFTC raw:\n<code>{(c.get('snippet') or '')[:3900]}</code>", chat_id=chat_id)
             return jsonify({"ok": True})
+        if text.startswith("/cot_full"):
+            c = get_cftc()  # уже существующая функция, которая достаёт файл или snippet
+            snippet = c.get("snippet") or ""
+            send_telegram("⌛ Анализирую полный отчёт CFTC...", chat_id=chat_id)
+
+            # запускаем GPT-анализ
+            ai_report = gpt_analyze_cftc(snippet)
+            send_telegram(ai_report, chat_id=chat_id)
+            return jsonify({"ok": True})
 
         if text.startswith("/macro"):
             m = get_fred()
