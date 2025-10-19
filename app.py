@@ -153,11 +153,13 @@ def get_eia_weekly():
             report += f"⚙️ **Production:** {val or 'N/A'} {u}\n"
             import requests
 
+import requests
+
 def get_eia_real_test(api_key: str):
     """
     Тестовый запрос к официальному EIA API v2.
-    Возвращает реальные weekly данные по нефти (Stocks, Imports, Production)
-    без изменения основного кода.
+    Возвращает реальные weekly данные по нефти (Stocks, Imports, Production).
+    Безопасен — не влияет на основной код.
     """
     urls = {
         "stocks": f"https://api.eia.gov/v2/petroleum/stoc/wstk/data/?api_key={api_key}&frequency=weekly&data[0]=value&facets[process][]=SAX&facets[area][]=NUS&facets[product][]=EPC0&sort[0][column]=period&sort[0][direction]=desc&length=1",
@@ -166,15 +168,18 @@ def get_eia_real_test(api_key: str):
     }
 
     results = {"source": "EIA API v2"}
+
     for key, url in urls.items():
         try:
-            r = requests.get(url, timeout=15).json()
-            data = r["response"]["data"][0]
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            data = r.json()["response"]["data"][0]
             results[key] = float(data["value"])
             results["period"] = data["period"]
         except Exception as e:
             results[key] = None
             results[f"{key}_error"] = str(e)
+
     return results
 
         # ==== Аналитика (AI Summary) ====
