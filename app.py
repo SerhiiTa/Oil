@@ -151,6 +151,31 @@ def get_eia_weekly():
         if "production" in data:
             val, u, _ = data["production"]
             report += f"⚙️ **Production:** {val or 'N/A'} {u}\n"
+            import requests
+
+def get_eia_real_test(api_key: str):
+    """
+    Тестовый запрос к официальному EIA API v2.
+    Возвращает реальные weekly данные по нефти (Stocks, Imports, Production)
+    без изменения основного кода.
+    """
+    urls = {
+        "stocks": f"https://api.eia.gov/v2/petroleum/stoc/wstk/data/?api_key={api_key}&frequency=weekly&data[0]=value&facets[process][]=SAX&facets[area][]=NUS&facets[product][]=EPC0&sort[0][column]=period&sort[0][direction]=desc&length=1",
+        "imports": f"https://api.eia.gov/v2/petroleum/move/wimpc/data/?api_key={api_key}&frequency=weekly&data[0]=value&facets[area][]=NUS&facets[product][]=EPC0&sort[0][column]=period&sort[0][direction]=desc&length=1",
+        "production": f"https://api.eia.gov/v2/petroleum/sum/sndw/data/?api_key={api_key}&frequency=weekly&data[0]=value&facets[area][]=NUS&facets[product][]=EPC0&sort[0][column]=period&sort[0][direction]=desc&length=1",
+    }
+
+    results = {"source": "EIA API v2"}
+    for key, url in urls.items():
+        try:
+            r = requests.get(url, timeout=15).json()
+            data = r["response"]["data"][0]
+            results[key] = float(data["value"])
+            results["period"] = data["period"]
+        except Exception as e:
+            results[key] = None
+            results[f"{key}_error"] = str(e)
+    return results
 
         # ==== Аналитика (AI Summary) ====
         analysis = "\n📈 **AI Summary:**\n"
@@ -600,6 +625,21 @@ def telegram_webhook():
             send_telegram(f"FRED raw:\n<code>{json.dumps(m, ensure_ascii=False)}</code>", chat_id=chat_id)
             return jsonify({"ok": True})
 
+               if text.startswith("/eia_real"):
+            api_key = "ТВОЙ_API_KEY_ИЗ_https://api.eia.gov/opendata/register.php"
+            data = get_eia_real_test(api_key)
+
+            msg = (
+                "📦 <b>EIA Real API Test</b>\n"
+                f"🗓 Period: {data.get('period', 'N/A')}\n"
+                f"📦 Stocks: {data.get('stocks', 'N/A')} MBBL\n"
+                f"🚢 Imports: {data.get('imports', 'N/A')} MBBL/D\n"
+                f"⚙️ Production: {data.get('production', 'N/A')} MBBL/D\n"
+                f"🔗 Source: {data.get('source', 'EIA v2')}"
+            )
+
+            send_telegram(msg, chat_id=chat_id)
+            return jsonify({"ok": True})
         send_telegram("Неизвестная команда. Введите /help", chat_id=chat_id)
         return jsonify({"ok": True})
 
