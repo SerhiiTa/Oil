@@ -661,22 +661,16 @@ def gpt_analyze(payload, prices):
 # ====== FORMAT MAIN SUMMARY ======
 def fmt_summary(payload, analysis=None):
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
-
-    # ===== BAKER HUGHES =====
 # ===== BAKER HUGHES =====
 baker = payload.get("baker") or {}
-
 if baker.get("error"):
     lines += ["\n🛠 <b>Baker Hughes:</b> данные не получены."]
 else:
     snippet = baker.get("snippet", "")
     sentiment = baker.get("sentiment", "")
-
-    # Обрезаем слишком длинный текст
     short_snippet = snippet[:250].strip()
     if len(snippet) > 250:
         short_snippet += "..."
-
     lines += [
         "\n🛠 <b>Baker Hughes Rig Count</b>",
         f"• {short_snippet}",
