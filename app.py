@@ -258,3 +258,163 @@ def gpt_analyze(payload):
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"GPT error: {e}"
+        # ====== FORMATTING ======
+def _fmt_num(x, nd=2):
+    try:
+        return f"{float(x):,.{nd}f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+def _fmt_pct(x, nd=2):
+    try:
+        return f"{float(x):+.{nd}f}%"
+    except (TypeError, ValueError):
+        return f"{0:+.{nd}f}%"
+
+def format_summary_msg(payload, analysis=None):
+    payload = payload or {}
+    lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
+
+    # --- EIA ---
+    e = (payload.get("eia") or {}).get("raw") or {}
+    if e:
+        lines.append(
+            f"📅 Period: <b>{e.get('period','N/A')}</b>\n"
+            f"📍 Region: <b>{e.get('area-name','N/A')}</b>\n"
+            f"🛢 Product: <b>{e.get('product-name','N/A')}</b>\n"
+            f"📦 Value: <b>{e.get('value','N/A')} {e.get('units','')}</b>"
+        )
+
+    # --- Market prices ---
+    p = payload.get("prices") or {}
+    lines.append(
+        f"\n💹 <b>Market:</b>\n"
+        f"🛢 WTI: <b>${_fmt_num(p.get('WTI'))}</b> ({_fmt_pct(p.get('WTI_change'))})\n"
+        f"💵 DXY: <b>{_fmt_num(p.get('DXY'))}</b> ({_fmt_pct(p.get('DXY_change'))})"
+    )
+
+    # --- AI analysis ---
+    if analysis:
+        lines.append("\n🧠 <b>AI Analysis</b>\n" + analysis)
+
+    return "\n".join(lines)
+
+
+# ====== COLLECT ALL DATA ======
+def collect(mode: str):
+    mode = (mode or "summary").lower()
+    data = {"timestamp": utc_now(), "mode": mode}
+
+    def _prices(): return ("prices", get_prices())
+    def _eia(): return ("eia", get_eia_weekly())
+    def _cot(): return ("cftc", get_cftc())
+    def _rigs(): return ("baker", get_baker_hughes())
+    def _fred(): return ("fred", get_fred_data())
+    def _alpha(): return ("alpha", get_alpha_vantage())
+
+    tasks = []
+    if mode in ("summary", "prices"): tasks.append(_prices)
+    if mode in ("summary", "eia"): tasks.append(_eia)
+    if mode in ("summary", "cot"): tasks.append(_cot)
+    if mode in ("summary", "rigs"): tasks.append(_rigs)
+    if mode in ("summary", "fred"): tasks.append(_fred)
+    if mode in ("summary", "alpha"): tasks.append(_alpha)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        futs = [ex.submit(fn) for fn in tasks]
+        for f in concurrent.futures.as_completed(futs):
+            k, v = f.result()
+            data[k] = v
+    return data
+
+
+# ====== EXECUTION ======
+def run_once(mode: str, chat_id: str | None = None):
+    payload = collect(mode)
+    analysis = None
+    if mode == "summary":
+        analysis = gpt_analyze(payload)
+    msg = format_summary_msg(payload, analysis)
+    send_telegram(msg, chat_id=chat_id)
+    return {"ok": True, "payload": payload, "analysis": analysis}
+
+
+# ====== ROUTES ======
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "time": utc_now()})
+
+
+@app.route("/data")
+def data_endpoint():
+    mode = request.args.get("mode", "summary")
+    return jsonify(collect(mode))
+
+
+@app.route("/analyze")
+def analyze_endpoint():
+    mode = request.args.get("mode", "summary")
+    return jsonify(run_once(mode))
+
+
+@app.route("/cron/daily")
+def cron_daily():
+    res = run_once("summary", chat_id=TELEGRAM_CHAT_ID)
+    return jsonify({"ok": True, "result": res})
+
+
+@app.route("/telegram", methods=["POST"])
+def telegram_webhook():
+    try:
+        update = request.get_json(force=True, silent=True) or {}
+        msg = update.get("message") or update.get("edited_message") or {}
+        chat_id = str(msg.get("chat", {}).get("id", "")) or TELEGRAM_CHAT_ID
+        text = (msg.get("text") or "").strip().lower()
+
+        if text in ("/start", "/help"):
+            help_txt = (
+                "🛢 <b>Oil Analyzer Bot</b>\n\n"
+                "Команды:\n"
+                "• /prices — последние цены WTI и DXY\n"
+                "• /summary — полный отчёт (EIA, Baker, CFTC, FRED, Alpha, AI)\n"
+                "• /help — помощь\n\n"
+                "📆 Автоотчёт ежедневно в 14:00 UTC."
+            )
+            send_telegram(help_txt, chat_id=chat_id)
+            return jsonify({"ok": True})
+
+        if text.startswith("/prices"):
+            data = collect("prices")
+            msg_txt = format_summary_msg(data)
+            send_telegram(msg_txt, chat_id=chat_id)
+            return jsonify({"ok": True})
+
+        if text.startswith("/summary"):
+            res = run_once("summary", chat_id=chat_id)
+            return jsonify({"ok": True, "result": res})
+
+        send_telegram("Неизвестная команда. Введите /help", chat_id=chat_id)
+        return jsonify({"ok": True})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+
+# ====== ROOT & RUN ======
+@app.route("/")
+def index():
+    return jsonify({
+        "ok": True,
+        "message": "Oil Analyzer Bot is running",
+        "time": utc_now()
+    })
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        mode = sys.argv[1].lower()
+        result = run_once(mode)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
