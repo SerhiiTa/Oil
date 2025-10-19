@@ -3,8 +3,8 @@
 # ============================
 #  Sources: EIA, Baker Hughes, CFTC, Yahoo Finance, FRED, Alpha Vantage
 #  Features:
-#   • AI-анализ по каждому блоку (EIA / Baker / CFTC / Macro)
-#   • Ежедневный авто-дайджест + команды /summary, /prices, /help
+#   • AI-анализ по каждому блоку
+#   • Ежедневный авто-дайджест + /summary, /prices, /help
 #   • Telegram webhook и CRON endpoint
 #   • Кэширование и параллельные запросы
 # ============================
@@ -20,7 +20,7 @@ from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request
 from openai import OpenAI
 
-# ====== ENVIRONMENT ======
+# ====== ENV ======
 EIA_API_KEY        = os.getenv("EIA_API_KEY", "")
 OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY", "")
 FRED_API_KEY       = os.getenv("FRED_API_KEY", "")
@@ -35,11 +35,9 @@ app = Flask(__name__)
 
 # ====== HELPERS ======
 def utc_now():
-    """Текущее время в UTC-формате."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def http_get(url):
-    """Безопасный GET-запрос с таймаутом."""
     return requests.get(url, timeout=REQUEST_TIMEOUT, headers={"User-Agent": "oil-analyzer/2.0"})
 
 # ====== CACHE ======
@@ -56,7 +54,6 @@ def set_cache(key, data, ttl_sec):
 
 # ====== TELEGRAM ======
 def send_telegram(text, chat_id=None):
-    """Отправить сообщение в Telegram (HTML)."""
     if not TELEGRAM_BOT_TOKEN:
         return False
     chat_id = chat_id or TELEGRAM_CHAT_ID
@@ -64,23 +61,20 @@ def send_telegram(text, chat_id=None):
         return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
         r = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
         return r.ok
     except Exception:
         return False
-        # ============================
+
+
+# ============================
 #   DATA SOURCES
 # ============================
 
 # ====== EIA ======
 def get_eia_weekly():
-    """EIA Weekly Petroleum Status (6h cache)."""
+    """EIA Weekly Petroleum Status (cache 6h)."""
     if not EIA_API_KEY:
         return {"error": "EIA_API_KEY missing"}
     cached = get_cache("eia")
@@ -88,7 +82,7 @@ def get_eia_weekly():
         return cached
     try:
         url = (
-            f"https://api.eia.gov/v2/petroleum/sum/sndw/data/"
+            "https://api.eia.gov/v2/petroleum/sum/sndw/data/"
             f"?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value"
             "&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1"
         )
@@ -103,7 +97,7 @@ def get_eia_weekly():
 
 # ====== Baker Hughes ======
 def get_baker_hughes():
-    """Парсинг страницы rigcount.bakerhughes.com"""
+    """Парсинг rigcount.bakerhughes.com (краткий сниппет)."""
     cached = get_cache("baker")
     if cached:
         return cached
@@ -126,63 +120,58 @@ def get_baker_hughes():
     return data
 
 
-# ====== CFTC (Disaggregated Futures + Options) ======
+# ====== CFTC (Disaggregated Petroleum) ======
 def get_cftc():
     """
-    Получаем сниппет из последних CFTC Disaggregated отчётов:
-    • Futures Only — https://www.cftc.gov/dea/futures/petroleum_lf.htm
-    • Combined (Futures + Options) — https://www.cftc.gov/dea/options/petroleum_lof.htm
+    Disaggregated reports:
+      • Futures Only:        https://www.cftc.gov/dea/futures/petroleum_lf.htm
+      • Futures + Options:   https://www.cftc.gov/dea/options/petroleum_lof.htm
+    Возвращает короткий текст вокруг "Crude Oil".
     """
     cached = get_cache("cftc")
     if cached:
         return cached
+
+    urls = [
+        "https://www.cftc.gov/dea/futures/petroleum_lf.htm",
+        "https://www.cftc.gov/dea/options/petroleum_lof.htm",
+    ]
+
+    texts = []
     try:
-        urls = [
-            "https://www.cftc.gov/dea/futures/petroleum_lf.htm",
-            "https://www.cftc.gov/dea/options/petroleum_lof.htm",
-        ]
-        texts = []
         for u in urls:
-            try:
-                html = http_get(u).text
-                soup = BeautifulSoup(html, "html.parser")
-                txt = soup.get_text(" ", strip=True)
-                if "Crude Oil" in txt:
-                    i = txt.find("Crude Oil")
-                    snippet = txt[max(0, i - 180): i + 300]
-                    texts.append(snippet)
-            except Exception:
-                continue
-        final_text = "\n\n".join(texts) if texts else "CFTC data not available or changed structure."
-        data = {"snippet": final_text.strip(), "source": "CFTC (Disaggregated Futures & Options)"}
+            html = http_get(u).text
+            soup = BeautifulSoup(html, "html.parser")
+            txt = soup.get_text(" ", strip=True)
+            key = "Crude Oil"
+            if key in txt:
+                i = txt.find(key)
+                snippet = txt[max(0, i - 160): i + 320].strip()
+                texts.append(snippet)
+            else:
+                texts.append(txt[:280])
+        final = "\n\n".join(texts) or "CFTC: no petroleum section found."
+        data = {"snippet": final, "source": "CFTC (Disaggregated Petroleum)"}
     except Exception as e:
         data = {"error": f"cftc: {e}"}
+
     set_cache("cftc", data, ttl_sec=86400)
     return data
-
-
-# ====== Yahoo Finance (WTI & DXY) ======
+    # ====== Yahoo Finance (WTI & DXY) ======
 def get_prices():
-    """
-    WTI & DXY c кэшем 10 минут. Стабильнее работает на Render:
-    - сначала .history(), потом fallback на .download()
-    - если не получили котировки, оставляем последний кэш, а не N/A
-    """
+    """WTI & DXY (cache 10m) с безопасным fallback."""
     cached = get_cache("prices")
     out = {"WTI": None, "WTI_change": None, "DXY": None, "DXY_change": None, "source": "Yahoo Finance"}
 
-    def _last_close(ticker, period="2d", interval=None):
+    def _last_close(ticker, period="2d", interval="1h"):
         t = yf.Ticker(ticker)
         try:
-            h = t.history(period=period, interval=interval or "1h")
+            h = t.history(period=period, interval=interval)
             if h is None or len(h.dropna()) == 0:
-                # fallback на download
-                h = yf.download(ticker, period=period, interval=interval or "1h", progress=False)
+                h = yf.download(ticker, period=period, interval=interval, progress=False)
             h = h.dropna()
             if len(h) >= 2:
-                last = float(h["Close"].iloc[-1])
-                prev = float(h["Close"].iloc[-2])
-                return last, prev
+                return float(h["Close"].iloc[-1]), float(h["Close"].iloc[-2])
             elif len(h) == 1:
                 last = float(h["Close"].iloc[-1])
                 return last, last
@@ -190,65 +179,53 @@ def get_prices():
             return None, None
         return None, None
 
-    # Пробуем получить WTI
     w_last, w_prev = _last_close("CL=F")
-    # Пробуем получить DXY
     d_last, d_prev = _last_close("DX-Y.NYB")
 
-    # Если ничего не получили — вернём кэш, чтобы не было N/A
     if (w_last is None or w_prev is None) and (d_last is None or d_prev is None):
         return cached or out
 
     try:
-        if w_last is not None and w_prev is not None:
+        if w_last and w_prev:
             out["WTI"] = round(w_last, 2)
-            out["WTI_change"] = round((w_last - w_prev) / w_prev * 100, 2) if w_prev else 0.0
-        if d_last is not None and d_prev is not None:
+            out["WTI_change"] = round((w_last - w_prev) / w_prev * 100, 2)
+        if d_last and d_prev:
             out["DXY"] = round(d_last, 2)
-            out["DXY_change"] = round((d_last - d_prev) / d_prev * 100, 2) if d_prev else 0.0
+            out["DXY_change"] = round((d_last - d_prev) / d_prev * 100, 2)
     except Exception as e:
         out["error"] = f"prices: {e}"
 
-    # если остались None — подставим предыдущие кэш-значения, если есть
     if cached:
         for k in ["WTI", "WTI_change", "DXY", "DXY_change"]:
             if out.get(k) is None:
                 out[k] = cached.get(k)
 
-    set_cache("prices", out, ttl_sec=600)  # 10 минут
+    set_cache("prices", out, ttl_sec=600)
     return out
 
 
-# ====== FRED (CPI, Fed Funds Rate) ======
+# ====== FRED ======
 def get_fred_data():
-    """CPI и Federal Funds Rate (cache 12h)."""
     if not FRED_API_KEY:
         return {"error": "FRED_API_KEY missing"}
     cached = get_cache("fred")
     if cached:
         return cached
     try:
-        url_cpi = f"https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key={FRED_API_KEY}&file_type=json"
+        url_cpi  = f"https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key={FRED_API_KEY}&file_type=json"
         url_rate = f"https://api.stlouisfed.org/fred/series/observations?series_id=FEDFUNDS&api_key={FRED_API_KEY}&file_type=json"
-        cpi = http_get(url_cpi).json()["observations"][-1]
+        cpi  = http_get(url_cpi).json()["observations"][-1]
         rate = http_get(url_rate).json()["observations"][-1]
-        data = {
-            "CPI": float(cpi["value"]),
-            "CPI_date": cpi["date"],
-            "FedRate": float(rate["value"]),
-            "FedRate_date": rate["date"],
-        }
+        data = {"CPI": float(cpi["value"]), "CPI_date": cpi["date"],
+                "FedRate": float(rate["value"]), "FedRate_date": rate["date"]}
         set_cache("fred", data, ttl_sec=43200)
         return data
     except Exception as e:
         return {"error": f"fred: {e}"}
 
 
-# ====== Alpha Vantage (Brent, S&P500) ======
+# ====== Alpha Vantage (через Yahoo) ======
 def get_alpha_vantage():
-    """Brent и S&P500 (cache 6h)."""
-    if not ALPHA_VANTAGE_KEY:
-        return {"error": "ALPHA_VANTAGE_KEY missing"}
     cached = get_cache("alpha")
     if cached:
         return cached
@@ -262,231 +239,22 @@ def get_alpha_vantage():
         return data
     except Exception as e:
         return {"error": f"alpha: {e}"}
-        # ============================
-#   AI, FORMATTING & ROUTES
-# ============================
+
 
 # ====== GPT ANALYSIS ======
 def gpt_analyze(payload):
-    """
-    Генерирует AI-комментарий. Без прокси-параметров (совместимо с openai v1.x).
-    API-ключ берется из переменной окружения OPENAI_API_KEY.
-    """
     if not OPENAI_API_KEY:
         return "GPT disabled: OPENAI_API_KEY not set."
     try:
-        # В v1.x клиент сам берёт ключ из env; передавать вручную тоже можно:
-        client = OpenAI(api_key=OPENAI_API_KEY)  # никаких proxies/transport
-
-        prompt = (
-            "Ты опытный аналитик нефтяного рынка. "
-            "Суммируй ключевые факторы (бычьи/медвежьи), дай рекомендацию (BUY/SELL/NEUTRAL), "
-            "укажи целевой диапазон (24–72ч) и стоп. Пиши ёмко, но содержательно.\n\n"
-            "Данные:\n" + json.dumps(payload, ensure_ascii=False, indent=2)
-        )
-
+        client = OpenAI(api_key=OPENAI_API_KEY)
         resp = client.chat.completions.create(
-            model="gpt-4o",  # если хочешь gpt-4o-mini — замени на "gpt-4o-mini"
+            model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Ты лаконичный и прагматичный рыночный аналитик."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": "Ты аналитик нефтяного рынка."},
+                {"role": "user", "content": "Проанализируй данные:\n" + json.dumps(payload, ensure_ascii=False, indent=2)},
             ],
-            temperature=0.25,
+            temperature=0.3,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"GPT error: {e}"
-
-
-def _fmt_num(x, nd=2):
-    """Безопасное число с округлением; None -> 'N/A'."""
-    try:
-        return f"{float(x):,.{nd}f}"
-    except (TypeError, ValueError):
-        return "N/A"
-
-def _fmt_pct(x, nd=2):
-    """Безопасный процент с знаком; None -> '+0.00%'."""
-    try:
-        return f"{float(x):+.{nd}f}%"
-    except (TypeError, ValueError):
-        return f"{0:+.{nd}f}%"
-
-def format_prices_msg(p: dict):
-    p = p or {}
-    wti = _fmt_num(p.get("WTI"))
-    wti_chg = _fmt_pct(p.get("WTI_change"))
-    dxy = _fmt_num(p.get("DXY"))
-    dxy_chg = _fmt_pct(p.get("DXY_change"))
-    parts = [
-        "💹 <b>DXY & WTI update</b>",
-        f"🕒 {utc_now()}",
-        f"🛢 WTI: <b>${wti}</b>  (24h {wti_chg})",
-        f"💵 DXY: <b>{dxy}</b>  (24h {dxy_chg})",
-    ]
-    return "\n".join(parts)
-
-def format_summary_msg(payload: dict, analysis: str | None = None):
-    payload = payload or {}
-    lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
-
-    # EIA
-    e = (payload.get("eia") or {}).get("raw") or {}
-    if e:
-        lines.append(
-            "📅 Period: <b>{}</b>\n"
-            "📍 Region: <b>{}</b>\n"
-            "🛢 Product: <b>{}</b>\n"
-            "📦 Value: <b>{} {}</b>".format(
-                e.get("period", "N/A"),
-                e.get("area-name", "N/A"),
-                e.get("product-name", "N/A"),
-                e.get("value", "N/A"),
-                e.get("units", ""),
-            )
-        )
-
-    # Baker Hughes (если есть сниппет — показываем коротко)
-    r = payload.get("rigs") or {}
-    if r.get("snippet"):
-        snippet = (r["snippet"].strip()[:280] + "…") if len(r["snippet"]) > 280 else r["snippet"].strip()
-        lines.append(f"\n🏗️ <b>Baker Hughes:</b>\n{snippet}")
-
-    # CFTC (если есть сниппет — показываем коротко)
-    c = payload.get("cot") or {}
-    if c.get("snippet"):
-        snippet = (c["snippet"].strip()[:280] + "…") if len(c["snippet"]) > 280 else c["snippet"].strip()
-        lines.append(f"\n📊 <b>CFTC:</b> {snippet}")
-
-    # Prices
-    p = payload.get("prices") or {}
-    wti = _fmt_num(p.get("WTI"))
-    wti_chg = _fmt_pct(p.get("WTI_change"))
-    dxy = _fmt_num(p.get("DXY"))
-    dxy_chg = _fmt_pct(p.get("DXY_change"))
-    lines.append(
-        f"\n💹 <b>Market:</b>\n"
-        f"🛢 WTI: <b>${wti}</b> ({wti_chg})\n"
-        f"💵 DXY: <b>{dxy}</b> ({dxy_chg})"
-    )
-
-    # GPT анализ (если есть)
-    if analysis:
-        lines.append("\n🧠 <b>AI Analysis</b>\n" + analysis)
-
-    return "\n".join(lines)
-
-
-# ====== DATA COLLECTION ======
-def collect(mode: str):
-    mode = (mode or "summary").lower()
-    data = {"timestamp": utc_now(), "mode": mode}
-
-    def _prices(): return ("prices", get_prices())
-    def _eia():    return ("eia", get_eia_weekly())
-    def _cot():    return ("cftc", get_cftc())
-    def _rigs():   return ("baker", get_baker_hughes())
-    def _fred():   return ("fred", get_fred_data())
-    def _alpha():  return ("alpha", get_alpha_vantage())
-
-    tasks = []
-    if mode in ("summary", "prices"): tasks.append(_prices)
-    if mode in ("summary", "eia"):    tasks.append(_eia)
-    if mode in ("summary", "cot"):    tasks.append(_cot)
-    if mode in ("summary", "rigs"):   tasks.append(_rigs)
-    if mode in ("summary", "fred"):   tasks.append(_fred)
-    if mode in ("summary", "alpha"):  tasks.append(_alpha)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        futs = [ex.submit(fn) for fn in tasks]
-        for f in concurrent.futures.as_completed(futs):
-            k, v = f.result()
-            data[k] = v
-    return data
-
-
-# ====== EXECUTION ======
-def run_once(mode: str, chat_id: str | None = None):
-    payload = collect(mode)
-    analysis = None
-    if mode == "summary":
-        analysis = gpt_analyze(payload)
-    msg = format_summary_msg(payload, analysis)
-    sent = send_telegram(msg, chat_id=chat_id)
-    return {"ok": True, "sent": sent, "payload": payload, "analysis": analysis}
-
-
-# ====== HTTP ROUTES ======
-@app.route("/health")
-def health():
-    return jsonify({"ok": True, "time": utc_now()})
-
-
-@app.route("/data")
-def data_endpoint():
-    mode = request.args.get("mode", "summary")
-    return jsonify(collect(mode))
-
-
-@app.route("/analyze")
-def analyze_endpoint():
-    mode = request.args.get("mode", "summary")
-    return jsonify(run_once(mode))
-
-
-# ====== DAILY CRON ======
-@app.route("/cron/daily")
-def cron_daily():
-    res = run_once("summary", chat_id=TELEGRAM_CHAT_ID)
-    return jsonify({"ok": True, "result": res})
-
-
-# ====== TELEGRAM COMMANDS ======
-@app.route("/telegram", methods=["POST"])
-def telegram_webhook():
-    try:
-        update = request.get_json(force=True, silent=True) or {}
-        msg = update.get("message") or update.get("edited_message") or {}
-        chat_id = str(msg.get("chat", {}).get("id", "")) or TELEGRAM_CHAT_ID
-        text = (msg.get("text") or "").strip().lower()
-
-        if text in ("/start", "/help"):
-            help_txt = (
-                "🛢 <b>Oil Analyzer Bot</b>\n\n"
-                "Команды:\n"
-                "• /prices — последние цены WTI и DXY\n"
-                "• /summary — полный отчёт (EIA, Baker, CFTC, FRED, Alpha, AI)\n"
-                "• /help — помощь\n\n"
-                "📆 Автоотчёт ежедневно в 14:00 UTC."
-            )
-            send_telegram(help_txt, chat_id=chat_id)
-            return jsonify({"ok": True})
-
-        if text.startswith("/prices"):
-            data = collect("prices")
-            msg_txt = format_summary_msg(data)
-            send_telegram(msg_txt, chat_id=chat_id)
-            return jsonify({"ok": True})
-
-        if text.startswith("/summary"):
-            res = run_once("summary", chat_id=chat_id)
-            return jsonify({"ok": True, "result": res})
-
-        send_telegram("Неизвестная команда. Введите /help", chat_id=chat_id)
-        return jsonify({"ok": True})
-
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 200
-
-
-# ====== RUN ======
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        mode = sys.argv[1].lower()
-        result = run_once(mode)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    else:
-        app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
-@app.route("/")
-def index():
-    return jsonify({"ok": True, "message": "Oil Analyzer Bot is running", "time": utc_now()})
