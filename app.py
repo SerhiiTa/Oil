@@ -92,12 +92,10 @@ def send_telegram(html_text, chat_id=None):
     except Exception:
         return False
         # ====== EIA ======
-# ====== EIA ======
-def get_eia_weekly():
+# ====== EIA ======def get_eia_weekly():
     """
-    Weekly EIA Petroleum Summary — только Crude Oil (EPC0)
+    EIA Crude Oil Weekly Report — красиво форматированный Telegram-отчёт.
     Кэш: 6 часов.
-    Возвращает красиво оформленный отчёт для Telegram.
     """
     if not EIA_API_KEY:
         return {"error": "EIA_API_KEY missing"}
@@ -112,63 +110,62 @@ def get_eia_weekly():
             f"?api_key={EIA_API_KEY}"
             "&frequency=weekly"
             "&data[0]=value"
-            "&facets[product][]=EPC0"  # Только нефть
+            "&facets[product][]=EPC0"
             "&sort[0][column]=period&sort[0][direction]=desc"
             "&offset=0&length=5"
         )
-
         js = http_get(url).json()
         records = (js.get("response") or {}).get("data") or []
 
         if not records:
             return {"error": "No EIA Crude Oil records found"}
 
-        # ==== Сбор ключевых данных ====
+        # Извлекаем данные
         data = {}
         for r in records:
-            series = r.get("series-description", "")
+            desc = r.get("series-description", "")
             val = r.get("value")
             units = r.get("units", "")
-            if "Ending Stocks" in series:
-                data["stocks"] = (val, units, series)
-            elif "Imports" in series:
-                data["imports"] = (val, units, series)
-            elif "Production" in series:
-                data["production"] = (val, units, series)
+            if "Ending Stocks" in desc:
+                data["stocks"] = (val, units)
+            elif "Imports" in desc:
+                data["imports"] = (val, units)
+            elif "Production" in desc:
+                data["production"] = (val, units)
 
-        # ==== Форматированный отчёт ====
         period = records[0].get("period")
-        report = f"🛢 **EIA Crude Oil Report ({period})**\n\n"
+
+        # Красивое форматирование
+        report = (
+            f"🛢 **EIA Crude Oil Report — {period}**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
 
         if "stocks" in data:
-            val, u, name = data["stocks"]
-            report += f"• **Stocks:** {val} {u}\n"
+            val, u = data["stocks"]
+            report += f"📦 **Stocks:** `{val}` {u}\n"
         if "imports" in data:
-            val, u, name = data["imports"]
-            report += f"• **Imports:** {val} {u}\n"
+            val, u = data["imports"]
+            report += f"🚢 **Imports (SPR):** `{val}` {u}\n"
         if "production" in data:
-            val, u, name = data["production"]
-            report += f"• **Production:** {val} {u}\n"
+            val, u = data["production"]
+            report += f"⚙️ **Production (AK):** `{val}` {u}\n"
 
-        # ==== Простейший анализ ====
-        analysis = "\n📈 **AI Summary:** "
-        if "stocks" in data and "production" in data:
-            stocks_val = float(data["stocks"][0])
-            prod_val = float(data["production"][0])
-            if stocks_val > 420000:
-                analysis += "High crude stocks may pressure prices slightly. "
-            else:
-                analysis += "Lower inventories support bullish tone. "
-            if prod_val > 400:
-                analysis += "Production stable, market balanced."
-            else:
-                analysis += "Production decline supports upside potential."
+        # Анализ
+        analysis = "\n📊 **AI Summary:**\n"
+        stocks_val = float(data.get("stocks", [0])[0])
+        prod_val = float(data.get("production", [0])[0])
+        if stocks_val > 800000:
+            analysis += "• 📈 High crude stocks may pressure prices.\n"
         else:
-            analysis += "Limited data for full trend evaluation."
+            analysis += "• 📉 Low inventories support bullish tone.\n"
+        if prod_val > 400:
+            analysis += "• ⚙️ Production stable — neutral bias.\n"
+        else:
+            analysis += "• 🛢 Production decline — bullish support.\n"
 
-        report += analysis
+        report += analysis + "━━━━━━━━━━━━━━━━━━━━━━━"
 
-        # ==== Возврат с кэшем ====
         result = {
             "period": period,
             "raw": data,
