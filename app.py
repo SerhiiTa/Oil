@@ -92,7 +92,8 @@ def send_telegram(html_text, chat_id=None):
     except Exception:
         return False
         # ====== EIA ======
-# ====== EIA ======def get_eia_weekly():
+# ====== EIA ======
+    def get_eia_weekly():
     """
     EIA Crude Oil Weekly Report — красиво форматированный Telegram-отчёт.
     Кэш: 6 часов.
