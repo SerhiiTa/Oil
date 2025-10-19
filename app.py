@@ -339,8 +339,8 @@ def gpt_analyze_full_html(payload: dict) -> str:
 CPI и ставка ФРС (и толкование). Если данных нет — укажи.
 
 <h3>💹 Market (WTI/DXY)</h3>
-WTI {('$' + f'{wti:.2f}') if isinstance(wti,(int,float)) else 'N/A'} ({(f'{wti_chg:+.2f}%' if isinstance(wti_chg,(int,float)) else '+0.00%')}), 
-DXY {(f'{dxy:.2f}' if isinstance(dxy,(int,float)) else 'N/A')} ({(f'{dxy_chg:+.2f}%' if isinstance(dxy_chg,(int,float)) else '+0.00%')})..
+WTI {('$' + f'{wti:.2f}') if (wti is not None and isinstance(wti,(int,float))) else 'N/A'} ({(f'{wti_chg:+.2f}%' if (wti_chg is not None and isinstance(wti_chg,(int,float))) else '+0.00%')}), 
+DXY {(f'{dxy:.2f}' if (dxy is not None and isinstance(dxy,(int,float))) else 'N/A')} ({(f'{dxy_chg:+.2f}%' if (dxy_chg is not None and isinstance(dxy_chg,(int,float))) else '+0.00%')}).
 
 ---
 <b>📊 Общий вердикт:</b> BUY/SELL/NEUTRAL (жирным, на одной строке)
