@@ -425,15 +425,47 @@ def fmt_summary(payload, analysis=None):
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
 
     # EIA
-    e = (payload.get("eia") or {})
-    rr = e.get("raw") or {}
-    if rr:
+        # ====== EIA ======
+    eia = payload.get("eia") or {}
+    if isinstance(eia, dict) and "raw" in eia:
+        raw = eia["raw"]
+        period = eia.get("period", "N/A")
+
+        stocks_val = raw.get("stocks", ["N/A", ""])[0]
+        imports_val = raw.get("imports", ["N/A", ""])[0]
+        prod_val = raw.get("production", ["N/A", ""])[0]
+        stocks_unit = raw.get("stocks", ["", ""])[1]
+        imports_unit = raw.get("imports", ["", ""])[1]
+        prod_unit = raw.get("production", ["", ""])[1]
+
+        # sentiment logic
+        try:
+            s_val = float(stocks_val)
+            p_val = float(prod_val)
+            if s_val > 820000 and p_val > 400:
+                sentiment = "🟥 <b>Bearish:</b> High inventories & steady output may pressure prices."
+            elif s_val < 780000 and p_val < 400:
+                sentiment = "🟩 <b>Bullish:</b> Falling stocks & reduced output support upside."
+            else:
+                sentiment = "⚪ <b>Neutral:</b> Balanced crude market."
+        except Exception:
+            sentiment = "⚪ <b>Neutral:</b> Data incomplete."
+
+        lines += [
+            "\n📦 <b>EIA Weekly Crude Snapshot</b>",
+            f"• Period: {period}",
+            f"• Stocks: {_num(stocks_val)} {stocks_unit}",
+            f"• Imports: {_num(imports_val)} {imports_unit}",
+            f"• Production: {_num(prod_val)} {prod_unit}",
+            f"{sentiment}",
+        ]
+    else:
         lines += [
             "\n📦 <b>EIA</b>",
-            f"• Period: {rr.get('period','N/A')}",
-            f"• Region: {rr.get('area-name','U.S. or PADD') or rr.get('area','N/A')}",
-            f"• Product: {rr.get('product-name','N/A') or rr.get('product','N/A')}",
-            f"• Value: {_num(rr.get('value'))} {rr.get('units','')}".strip(),
+            "• Period: N/A",
+            "• Region: U.S. or PADD",
+            "• Product: N/A",
+            "• Value: N/A",
         ]
 
     # Baker
