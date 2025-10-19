@@ -683,8 +683,6 @@ else:
     ]
     if sentiment:
         lines.append(sentiment)
-        else:
-            lines += ["\n🛠 <b>Baker Hughes:</b> данные не получены."]
 
     # ====== EIA ======
     eia = payload.get("eia") or {}
