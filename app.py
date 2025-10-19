@@ -496,7 +496,22 @@ def cron_daily():
     """
     res = run_once("summary", chat_id=TELEGRAM_CHAT_ID)
     return jsonify({"ok": True, "result": res})
+# ===== FORMAT PRICES =====
+def fmt_prices(pr):
+    if not pr:
+        return "💹 Market data unavailable."
 
+    wti = pr.get("WTI")
+    dxy = pr.get("DXY")
+    wti_ch = pr.get("WTI_change")
+    dxy_ch = pr.get("DXY_change")
+
+    lines = [
+        "💹 <b>Market Update</b>",
+        f"🛢 WTI: ${_num(wti)} (24h {_pct(wti_ch)})",
+        f"💵 DXY: {_num(dxy)} (24h {_pct(dxy_ch)})",
+    ]
+    return "\n".join(lines)
 # ====== TELEGRAM WEBHOOK ======
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
