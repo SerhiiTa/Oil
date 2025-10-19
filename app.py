@@ -586,6 +586,75 @@ def gpt_analyze(payload, prices):
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"GPT error: {e}"
+# ====== FORMAT MAIN SUMMARY ======
+def fmt_summary(payload, analysis=None):
+    lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
+
+    # ====== EIA ======
+    eia = payload.get("eia") or {}
+    if isinstance(eia, dict) and "raw" in eia:
+        raw = eia["raw"]
+        period = eia.get("period", "N/A")
+
+        stocks_val = raw.get("stocks", ["N/A", ""])[0]
+        imports_val = raw.get("imports", ["N/A", ""])[0]
+        prod_val = raw.get("production", ["N/A", ""])[0]
+        stocks_unit = raw.get("stocks", ["", ""])[1]
+        imports_unit = raw.get("imports", ["", ""])[1]
+        prod_unit = raw.get("production", ["", ""])[1]
+
+        try:
+            s_val = float(stocks_val)
+            p_val = float(prod_val)
+            if s_val > 820000 and p_val > 400:
+                sentiment = "🟥 <b>Bearish:</b> High inventories & steady output may pressure prices."
+            elif s_val < 780000 and p_val < 400:
+                sentiment = "🟩 <b>Bullish:</b> Falling stocks & reduced output support upside."
+            else:
+                sentiment = "⚪ <b>Neutral:</b> Balanced crude market."
+        except Exception:
+            sentiment = "⚪ <b>Neutral:</b> Data incomplete."
+
+        lines += [
+            "\n📦 <b>EIA Weekly Crude Snapshot</b>",
+            f"• Period: {period}",
+            f"• Stocks: {_num(stocks_val)} {stocks_unit}",
+            f"• Imports: {_num(imports_val)} {imports_unit}",
+            f"• Production: {_num(prod_val)} {prod_unit}",
+            f"{sentiment}",
+        ]
+
+    # ====== CFTC ======
+    cftc_txt = payload.get("cftc_interpretation")
+    if cftc_txt:
+        lines += ["\n📊 <b>CFTC</b>", cftc_txt]
+
+    # ====== MACRO ======
+    fred = payload.get("fred") or {}
+    if isinstance(fred, dict) and fred:
+        lines += [
+            "\n🏦 <b>Macro (FRED)</b>",
+            f"• CPI: {_num(fred.get('CPI'))}",
+            f"• Fed Funds: {_num(fred.get('FedRate'))}%",
+        ]
+
+    # ====== MARKET ======
+    pr = payload.get("prices") or {}
+    if isinstance(pr, dict) and pr:
+        lines += [
+            "\n💹 <b>Market</b>",
+            f"🛢 WTI: ${_num(pr.get('WTI'))} (24h {_pct(pr.get('WTI_change'))})",
+            f"💵 DXY: {_num(pr.get('DXY'))} (24h {_pct(pr.get('DXY_change'))})",
+        ]
+
+    # ====== AI ======
+    if analysis:
+        lines += [
+            "\n🧠 <b>AI Analysis</b>",
+            analysis,
+        ]
+
+    return "\n".join(lines)
 # ====== RUN ======
 # ====== RUN ONCE (MAIN SUMMARY BUILDER) ======
 def run_once(mode="summary", chat_id=None):
