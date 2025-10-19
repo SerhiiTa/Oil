@@ -263,58 +263,79 @@ def gpt_analyze(payload):
         return f"GPT error: {e}"
 
 
-# ====== MESSAGE FORMATTING ======
-def format_summary_msg(payload, analysis=None):
+def _fmt_num(x, nd=2):
+    """Безопасное число с округлением; None -> 'N/A'."""
+    try:
+        return f"{float(x):,.{nd}f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+def _fmt_pct(x, nd=2):
+    """Безопасный процент с знаком; None -> '+0.00%'."""
+    try:
+        return f"{float(x):+.{nd}f}%"
+    except (TypeError, ValueError):
+        return f"{0:+.{nd}f}%"
+
+def format_prices_msg(p: dict):
+    p = p or {}
+    wti = _fmt_num(p.get("WTI"))
+    wti_chg = _fmt_pct(p.get("WTI_change"))
+    dxy = _fmt_num(p.get("DXY"))
+    dxy_chg = _fmt_pct(p.get("DXY_change"))
+    parts = [
+        "💹 <b>DXY & WTI update</b>",
+        f"🕒 {utc_now()}",
+        f"🛢 WTI: <b>${wti}</b>  (24h {wti_chg})",
+        f"💵 DXY: <b>{dxy}</b>  (24h {dxy_chg})",
+    ]
+    return "\n".join(parts)
+
+def format_summary_msg(payload: dict, analysis: str | None = None):
+    payload = payload or {}
     lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
 
-    # --- EIA ---
-    e = payload.get("eia", {}).get("raw", {})
+    # EIA
+    e = (payload.get("eia") or {}).get("raw") or {}
     if e:
         lines.append(
-            f"\n📅 <b>EIA Weekly:</b>\n"
-            f"Period: <b>{e.get('period','N/A')}</b>\n"
-            f"Region: <b>{e.get('area-name','N/A')}</b>\n"
-            f"Product: <b>{e.get('product-name','N/A')}</b>\n"
-            f"Value: <b>{e.get('value','N/A')} {e.get('units','')}</b>"
+            "📅 Period: <b>{}</b>\n"
+            "📍 Region: <b>{}</b>\n"
+            "🛢 Product: <b>{}</b>\n"
+            "📦 Value: <b>{} {}</b>".format(
+                e.get("period", "N/A"),
+                e.get("area-name", "N/A"),
+                e.get("product-name", "N/A"),
+                e.get("value", "N/A"),
+                e.get("units", ""),
+            )
         )
 
-    # --- Baker Hughes ---
-    r = payload.get("baker", {})
+    # Baker Hughes (если есть сниппет — показываем коротко)
+    r = payload.get("rigs") or {}
     if r.get("snippet"):
-        lines.append(f"\n🏗️ <b>Baker Hughes:</b>\n{r['snippet']}")
+        snippet = (r["snippet"].strip()[:280] + "…") if len(r["snippet"]) > 280 else r["snippet"].strip()
+        lines.append(f"\n🏗️ <b>Baker Hughes:</b>\n{snippet}")
 
-    # --- CFTC ---
-    c = payload.get("cftc", {})
+    # CFTC (если есть сниппет — показываем коротко)
+    c = payload.get("cot") or {}
     if c.get("snippet"):
-        lines.append(f"\n📊 <b>CFTC (Commitments of Traders):</b>\n<code>{c['snippet'][:900]}</code>")
+        snippet = (c["snippet"].strip()[:280] + "…") if len(c["snippet"]) > 280 else c["snippet"].strip()
+        lines.append(f"\n📊 <b>CFTC:</b> {snippet}")
 
-    # --- FRED ---
-    f = payload.get("fred", {})
-    if f and "CPI" in f:
-        lines.append(
-            f"\n🏦 <b>FRED:</b>\n"
-            f"CPI: <b>{f['CPI']}</b> (as of {f['CPI_date'][:10]})\n"
-            f"Fed Funds Rate: <b>{f['FedRate']}%</b> (as of {f['FedRate_date'][:10]})"
-        )
-
-    # --- Alpha Vantage ---
-    a = payload.get("alpha", {})
-    if a and "Brent" in a:
-        lines.append(
-            f"\n🌍 <b>Alpha Vantage:</b>\n"
-            f"Brent: <b>${a['Brent']}</b>\n"
-            f"S&P 500: <b>{a['SP500']}</b>"
-        )
-
-    # --- Yahoo Finance (WTI / DXY) ---
-    p = payload.get("prices", {})
+    # Prices
+    p = payload.get("prices") or {}
+    wti = _fmt_num(p.get("WTI"))
+    wti_chg = _fmt_pct(p.get("WTI_change"))
+    dxy = _fmt_num(p.get("DXY"))
+    dxy_chg = _fmt_pct(p.get("DXY_change"))
     lines.append(
         f"\n💹 <b>Market:</b>\n"
-        f"WTI: <b>${p.get('WTI','N/A')}</b> ({p.get('WTI_change',0):+}%)\n"
-        f"DXY: <b>{p.get('DXY','N/A')}</b> ({p.get('DXY_change',0):+}%)"
+        f"🛢 WTI: <b>${wti}</b> ({wti_chg})\n"
+        f"💵 DXY: <b>{dxy}</b> ({dxy_chg})"
     )
 
-    # --- GPT Analysis ---
+    # GPT анализ (если есть)
     if analysis:
         lines.append("\n🧠 <b>AI Analysis</b>\n" + analysis)
 
