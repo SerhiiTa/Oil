@@ -339,199 +339,78 @@ def get_prices():
 # По умолчанию используем gpt-4o-mini — быстрее и дешевле.
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-def gpt_analyze(payload, prices):
-    """
-    Генерация торгового плана и сводки.
-    Если API-ключа нет — вернём краткий rule-based план.
-    """
-    # Бэкап-логика без GPT (чтобы всегда был план)
-    def rule_based():
-        px = prices or {}
-        wti = px.get("WTI")
-        ch = px.get("WTI_change")
-        dxy = px.get("DXY_change")
-        # простая евкалиптика: WTI↑ & DXY↓ → BUY, иначе SELL, если нет данных → NEUTRAL
-        if wti is None:
-            rec = "NEUTRAL"
-        else:
-            score = (ch or 0) - (dxy or 0)
-            rec = "BUY" if score > 0 else "SELL" if score < 0 else "NEUTRAL"
-        # динамические таргет/стоп
-        if wti:
-            vol = max(abs(ch or 0), 0.6) / 100.0  # грубая «вола» от % изменения
-            tgt = wti * (1 + (0.018 if rec == "BUY" else -0.018))  # ~1.8%
-            stp = wti * (1 - (0.009 if rec == "BUY" else -0.009))  # ~0.9% в противоположную сторону
-            tgt = round(tgt, 2)
-            stp = round(stp, 2)
-        else:
-            tgt = stp = None
+# ====== CFTC ANALYSIS MODULE (ADD-ON) ======
+import re
 
-        lines = [
-            f"🔴 <b>EIA Oil Report Analysis</b>",
-            f"🎯 <b>{rec}</b>",
-            f"💰 Цена WTI: {('$'+_num(wti)) if wti else 'N/A'}",
-            "",
-            "<b>Торговый план:</b>",
-            f"🎯 Цель: {('$'+_num(tgt)) if tgt else 'Не определена'}",
-            f"⛔ Стоп: {('$'+_num(stp)) if stp else 'Не определен'}",
-        ]
-        return "\n".join(lines)
+def analyze_cftc_snippet(snippet: str) -> str:
+    """
+    Мини-анализ CFTC для краткого дневного отчёта.
+    Извлекает базовые числа (Producers, Managed Money Long/Short) и делает быструю интерпретацию.
+    """
+    if not snippet:
+        return "CFTC: данные отсутствуют."
 
-    if not OPENAI_API_KEY:
-        return rule_based()
+    # Ищем первые три числа в тексте (обычно это producers, long, short)
+    nums = re.findall(r"([\d\.]+)", snippet)
+    if len(nums) < 3:
+        return "CFTC: не удалось извлечь позиции."
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        producers = float(nums[0])
+        money_long = float(nums[1])
+        money_short = float(nums[2])
+        diff = money_long - money_short
 
-        prompt = (
-            "Ты кратко и чётко анализируешь рынок нефти. Используй факты из блоков ниже и выдай:\n"
-            "1) Рекомендацию BUY/SELL/NEUTRAL\n"
-            "2) Торговый план: цель и стоп (динамические, опирайся на текущую цену WTI)\n"
-            "3) 2–4 фактора (буллеты) по EIA/Baker/CFTC/Macro/Prices\n"
-            "4) Короткий итог на 24–72 часа.\n\n"
-            "Данные:\n"
-            + json.dumps(payload, ensure_ascii=False)
+        if diff > 10:
+            sentiment = "🟩 Bullish — фонды наращивают длинные позиции."
+        elif diff < -10:
+            sentiment = "🟥 Bearish — фонды увеличивают короткие позиции."
+        else:
+            sentiment = "⚪ Neutral — баланс длинных и коротких позиций."
+
+        return (
+            f"📊 <b>CFTC Snapshot</b>\n"
+            f"• Producers: {producers:.1f}%\n"
+            f"• Managed Money (Long): {money_long:.1f}%\n"
+            f"• Managed Money (Short): {money_short:.1f}%\n"
+            f"{sentiment}"
         )
+    except Exception as e:
+        return f"CFTC parsing error: {e}"
 
-        msg = [
-            {"role": "system", "content": "Ты дисциплинированный рыночный аналитик. Коротко, по делу."},
-            {"role": "user", "content": prompt},
-        ]
+
+def gpt_analyze_cftc(full_text: str) -> str:
+    """
+    Глубокий анализ полного еженедельного отчёта CFTC.
+    GPT сам делает вывод о динамике длинных/коротких позиций и рыночных настроениях.
+    """
+    if not OPENAI_API_KEY:
+        return "⚠️ Нет ключа OpenAI. GPT-анализ недоступен."
+
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    prompt = (
+        "Ты опытный аналитик рынка нефти. Проанализируй этот полный текст отчёта CFTC "
+        "(Commitments of Traders) по нефти WTI.\n"
+        "Выдели ключевые изменения позиций Managed Money и Producers по сравнению с прошлой неделей, "
+        "сделай вывод о настроении рынка (Bullish / Bearish / Neutral) и краткий прогноз на неделю.\n\n"
+        "Отчёт:\n" + full_text
+    )
+
+    try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=msg,
-            temperature=0.25,
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Ты аналитик CFTC. Пиши коротко и по делу, в виде отчёта."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
             max_tokens=600,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"GPT error: {e}"
-
-# ====== message formatting ======
-def fmt_prices(pr):
-    w = _num(pr.get("WTI"))
-    wc = _pct(pr.get("WTI_change"))
-    d = _num(pr.get("DXY"))
-    dc = _pct(pr.get("DXY_change"))
-    return (
-        "💹 <b>DXY & WTI update</b>\n"
-        f"🕒 {utc_now()}\n\n"
-        f"🛢 WTI: <b>${w}</b> (24h {wc})\n"
-        f"💵 DXY: <b>{d}</b> (24h {dc})"
-    )
-
-def fmt_summary(payload, analysis=None):
-    lines = [f"🧾 <b>Oil Report: SUMMARY</b>", f"🕒 {utc_now()}"]
-
-    # EIA
-    eia = payload.get("eia") or {}
-    if isinstance(eia, dict) and "raw" in eia:
-        raw = eia["raw"]
-        period = eia.get("period", "N/A")
-
-        stocks_val = raw.get("stocks", ["N/A", ""])[0]
-        imports_val = raw.get("imports", ["N/A", ""])[0]
-        prod_val = raw.get("production", ["N/A", ""])[0]
-        stocks_unit = raw.get("stocks", ["", ""])[1]
-        imports_unit = raw.get("imports", ["", ""])[1]
-        prod_unit = raw.get("production", ["", ""])[1]
-
-        # sentiment logic
-        try:
-            s_val = float(stocks_val)
-            p_val = float(prod_val)
-            if s_val > 820000 and p_val > 400:
-                sentiment = "🟥 <b>Bearish:</b> High inventories & steady output may pressure prices."
-            elif s_val < 780000 and p_val < 400:
-                sentiment = "🟩 <b>Bullish:</b> Falling stocks & reduced output support upside."
-            else:
-                sentiment = "⚪ <b>Neutral:</b> Balanced crude market."
-        except Exception:
-            sentiment = "⚪ <b>Neutral:</b> Data incomplete."
-
-        lines += [
-            "\n📦 <b>EIA Weekly Crude Snapshot</b>",
-            f"• Period: {period}",
-            f"• Stocks: {_num(stocks_val)} {stocks_unit}",
-            f"• Imports: {_num(imports_val)} {imports_unit}",
-            f"• Production: {_num(prod_val)} {prod_unit}",
-            f"{sentiment}",
-        ]
-    else:
-        lines += [
-            "\n📦 <b>EIA</b>",
-            "• Period: N/A",
-            "• Region: U.S. or PADD",
-            "• Product: N/A",
-            "• Value: N/A",
-        ]
-
-    # Baker
-    b = payload.get("baker") or {}
-    if b.get("snippet"):
-        s = b["snippet"].strip()
-        s = (s[:400] + "…") if len(s) > 400 else s
-        lines += ["", "🏗️ <b>Baker Hughes</b>", s]
-
-    # CFTC
-    c = payload.get("cftc") or {}
-    if c.get("snippet"):
-        s = c["snippet"].strip()
-        s = (s[:800] + "…") if len(s) > 800 else s
-        lines += ["", "📊 <b>CFTC</b>", f"<code>{s}</code>"]
-
-    # Macro
-    m = payload.get("fred") or {}
-    if m and "CPI" in m:
-        lines += [
-            "", "🏦 <b>Macro (FRED)</b>",
-            f"• CPI: {_num(m.get('CPI'))}",
-            f"• Fed Funds: {_num(m.get('FedRate'))}%",
-        ]
-
-    # Market
-    p = payload.get("prices") or {}
-    lines += [
-        "", "💹 <b>Market</b>",
-        f"🛢 WTI: ${_num(p.get('WTI'))} (24h {_pct(p.get('WTI_change'))})",
-        f"💵 DXY: {_num(p.get('DXY'))} (24h {_pct(p.get('DXY_change'))})",
-    ]
-
-    if analysis:
-        lines += ["", "🧠 <b>AI Analysis</b>", analysis]
-
-    return "\n".join(lines)
-    # ====== сбор данных ======
-def collect(mode="summary"):
-    mode = (mode or "summary").lower()
-    data = {"timestamp": utc_now(), "mode": mode}
-
-    jobs = []
-    if mode in ("summary", "prices"): jobs.append(("prices", get_prices))
-    if mode in ("summary", "eia"):    jobs.append(("eia", get_eia_weekly))
-    if mode in ("summary", "baker"):  jobs.append(("baker", get_baker_hughes))
-    if mode in ("summary", "cftc", "cot"):    jobs.append(("cftc", get_cftc))
-    if mode in ("summary", "macro", "fred"):  jobs.append(("fred", get_fred))
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        futs = {ex.submit(fn): key for key, fn in jobs}
-        for f in concurrent.futures.as_completed(futs):
-            k = futs[f]
-            try:
-                data[k] = f.result()
-            except Exception as e:
-                data[k] = {"error": f"{k}: {e}"}
-    return data
-
-def run_once(mode="summary", chat_id=None):
-    payload = collect(mode)
-    analysis = None
-    if mode == "summary":
-        analysis = gpt_analyze(payload, payload.get("prices") or {})
-    msg = fmt_summary(payload, analysis)
-    ok = send_telegram(msg, chat_id=chat_id)
-    return {"ok": True, "sent": ok, "payload": payload, "analysis": analysis}
 
 # ====== ROUTES ======
 @app.route("/")
