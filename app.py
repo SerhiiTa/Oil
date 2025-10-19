@@ -427,7 +427,7 @@ def fmt_summary(payload, analysis=None):
     # EIA
         # ====== EIA ======
     eia = payload.get("eia") or {}
-    if isinstance(eia, dict) and "raw" in eia:
+if isinstance(eia, dict) and "raw" in eia:
         raw = eia["raw"]
         period = eia.get("period", "N/A")
 
