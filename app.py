@@ -151,9 +151,6 @@ def get_eia_weekly():
         if "production" in data:
             val, u, _ = data["production"]
             report += f"⚙️ **Production:** {val or 'N/A'} {u}\n"
-            import requests
-
-import requests
 
 def get_eia_real_test(api_key: str):
     """
