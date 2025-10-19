@@ -1,6 +1,7 @@
 flask
 requests
 yfinance
-openai
+pandas
+numpy
 beautifulsoup4
-gunicorn
+openai
