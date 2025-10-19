@@ -1,9 +1,6 @@
-flask==3.0.3
-requests==2.31.0
-yfinance==0.2.43
-openai==1.46.0
-pandas==2.2.3
-numpy==1.26.4
-gunicorn==23.0.0
-beautifulsoup4==4.12.3
-lxml==5.2.2
+flask
+requests
+yfinance
+openai
+beautifulsoup4
+gunicorn
