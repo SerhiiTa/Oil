@@ -30,7 +30,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Сетевые настройки
-REQUEST_TIMEOUT = 20
+REQUEST_TIMEOUT = 40
 UA = {"User-Agent": "oil-analyzer/3.0 (+https://render.com)"}
 
 # Память для простого кэша
