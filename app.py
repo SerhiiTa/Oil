@@ -594,13 +594,13 @@ def telegram_webhook():
             res = run_once("summary", chat_id=chat_id)
             return jsonify({"ok": True, "result": res})
 
-if text.startswith("/eia"):
-    e = get_eia_weekly()
-    if "error" in e:
-        send_telegram(f"⚠️ {e['error']}", chat_id=chat_id)
-    else:
-        send_telegram(e.get("report", "No EIA data available."), chat_id=chat_id)
-    return jsonify({"ok": True})
+        if text.startswith("/eia"):
+            e = get_eia_weekly()
+            if "error" in e:
+                send_telegram(f"⚠️ {e['error']}", chat_id=chat_id)
+            else:
+                send_telegram(e.get("report", "No EIA data available."), chat_id=chat_id)
+            return jsonify({"ok": True})
 
         if text.startswith("/baker"):
             b = get_baker_hughes()
